@@ -63,7 +63,8 @@ To uninstall, use **Settings → Apps → Installed apps → DisplayWeave → Un
 It closes DisplayWeave and removes its program files, Start menu shortcut and startup
 entry. Your regions and app rules are kept unless you tick **Also delete my regions
 and app rules**. Files that another running app still has loaded are removed at your
-next sign-in.
+next sign-in. If you used **Restart as administrator** and a helper copy was still in
+use when DisplayWeave exited, delete `%ProgramFiles%\DisplayWeave` as administrator.
 
 For scripted use: `--quiet`, `--no-launch`, `--startup Enable|Disable|Preserve`,
 `--uninstall`, `--remove-settings` and `--log <file>`.
@@ -271,6 +272,11 @@ objects retain the creator's default access list and use a medium integrity
 label so the app can acknowledge commands. Elevated targets retain their default
 security. Existing objects are never relabeled.
 
+With administrator access, DisplayWeave starts its native helpers from a copy in
+`%ProgramFiles%\DisplayWeave`, which only administrators can change, and removes
+the copy when it exits. A copy still loaded by a running app is removed at the next
+administrator start. Administrator mode never checks for or installs updates.
+
 While running with administrator access, reopen settings from DisplayWeave's
 tray icon. Use **Exit DisplayWeave** from the tray before running the ordinary
 updater. Windows can block messages from a normal launcher or updater to an
@@ -380,9 +386,9 @@ These commands apply to the source project, not the portable ZIP.
 .\tests\test-monitor.ps1 -Architecture all -HeartbeatExpiry
 ```
 
-`fetch-tools.ps1` downloads Zig 0.13.0 and checks its SHA-256 against the official
-Zig release index. MinHook v1.3.4 is vendored with its license; the script fetches
-it only if absent. The toolchain stays inside the workspace.
+`fetch-tools.ps1` downloads Zig 0.13.0 and checks it against a SHA-256 pinned in the
+script. MinHook v1.3.4 is vendored with its license. The toolchain stays inside the
+workspace.
 The C# build uses Windows' .NET Framework compiler. Native integration tests open
 temporary DirectX test windows and attach only to those test processes. The monitor fixture keeps its Direct3D swapchain windowed throughout. Legacy DXGI
 fixtures remain available for testing older resident components only.
@@ -442,9 +448,13 @@ static class Headless
 ```
 
 Put the host next to `DisplayWeave.Core.dll` and the `native-v2-x64` and
-`native-v2-x86` folders; the engine starts its native helpers from there. Exit the
+`native-v2-x86` folders; the engine starts its native helpers from there. A host that
+runs as administrator should copy those folders somewhere only administrators can
+change and set `FullscreenController.HelperDirectory`, as the app does. Exit the
 DisplayWeave app first, so two controllers never handle the same windows.
 `DisplayMonitor` lists monitors by the device names that layouts and rules use.
+.NET also has a `System.ApplicationIdentity`, so a host that imports both namespaces and
+names the type adds `using ApplicationIdentity = DisplayWeave.ApplicationIdentity;`.
 
 ## License
 

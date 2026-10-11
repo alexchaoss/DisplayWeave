@@ -68,6 +68,15 @@ namespace DisplayWeave.Prototype
 
             check(Policy.Terminal("completed") && Policy.Terminal("failed") && !Policy.Terminal("running") && !Policy.Terminal("cleaning"), "terminal states");
 
+            string elevated = ElevatedFixture.Arguments(@"C:\Users\O'Neil\App\v1", @"C:\Program Files\DisplayWeavePrototype\sessions", "abc", 120, ElevatedFixture.Verified);
+            check(elevated.StartsWith("-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"", StringComparison.Ordinal) &&
+                elevated.IndexOf('"', 64) == elevated.Length - 1, "elevated bootstrap is one quoted command argument");
+            check(elevated.Contains("'C:\\Users\\O''Neil\\App\\v1'") && elevated.Contains("'C:\\Program Files\\DisplayWeavePrototype\\sessions\\abc'"), "bootstrap paths are escaped literals");
+            check(elevated.Contains("'" + BuildHashes.Fixture + "'") && elevated.Contains("'" + BuildHashes.Lease + "'") && BuildHashes.Fixture.Length == 64 &&
+                BuildHashes.Lease.Length == 64, "bootstrap pins the fixture and lease hashes of this build");
+            check(elevated.Length < 2000, "bootstrap fits a ShellExecute command line");
+            check(ElevatedFixture.Reports("abc").StartsWith(ElevatedFixture.ProtectedRoot + @"\abc\", StringComparison.Ordinal), "reports stay in the protected session folder");
+
             lines.Add(passed + " passed; " + failed + " failed.");
             File.WriteAllLines(reportPath, lines.ToArray(), new UTF8Encoding(false));
             return failed == 0 ? 0 : 1;

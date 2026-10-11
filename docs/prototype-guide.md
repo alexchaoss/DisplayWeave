@@ -43,4 +43,4 @@ The virtual display is 1280 × 720 at 60 Hz. The image is scaled to fit the regi
 
 ## If something goes wrong
 
-Each session writes its reports to `%LOCALAPPDATA%\DisplayWeavePrototype\sessions\<id>`. If the window was not put back, the app shows **Restore window** the next time it opens. The temporary display removes itself when its 2-minute lease expires, even if the prototype closes.
+Each session writes its reports to `%LOCALAPPDATA%\DisplayWeavePrototype\sessions\<id>` (the 20 newest are kept). The administrator step runs from copies it checks against this build, in `%ProgramFiles%\DisplayWeavePrototype\sessions\<id>`, and writes the display reports there; those are removed after a week. After removing the prototype, delete that folder as administrator. If the window was not put back, the app shows **Restore window** the next time it opens. The temporary display removes itself when its 2-minute lease expires, even if the prototype closes.

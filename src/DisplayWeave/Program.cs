@@ -69,16 +69,33 @@ namespace DisplayWeave
                 WindowManager.EnableDpiAwareness();
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
-                using (var form = new MainForm(options.AutomaticExecutableFilter, options.DataDirectory, options.StartMinimized))
+                string helpers = null;
+                if (ElevationRestart.IsElevated())
                 {
-                    Application.ThreadException += delegate(object sender, ThreadExceptionEventArgs e)
+                    try { helpers = ElevationRestart.CopyHelpers(AppDomain.CurrentDomain.BaseDirectory, ElevationRestart.HelperRoot, ElevationRestart.UserSid()); }
+                    catch (Exception ex)
                     {
-                        form.PauseFullscreenRules();
-                        MessageBox.Show("Windows have been released after an error.\n\n" + e.Exception.Message, "DisplayWeave");
-                    };
-                    try { Application.Run(form); }
-                    finally { form.PauseFullscreenRules(); }
+                        if (!(ex is IOException) && !(ex is UnauthorizedAccessException)) throw;
+                        MessageBox.Show("DisplayWeave could not prepare its helpers for administrator mode.\n\n" + ex.Message, "DisplayWeave could not start",
+                            MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return 2;
+                    }
+                    FullscreenController.HelperDirectory = helpers;
                 }
+                try
+                {
+                    using (var form = new MainForm(options.AutomaticExecutableFilter, options.DataDirectory, options.StartMinimized))
+                    {
+                        Application.ThreadException += delegate(object sender, ThreadExceptionEventArgs e)
+                        {
+                            form.PauseFullscreenRules();
+                            MessageBox.Show("Windows have been released after an error.\n\n" + e.Exception.Message, "DisplayWeave");
+                        };
+                        try { Application.Run(form); }
+                        finally { form.PauseFullscreenRules(); }
+                    }
+                }
+                finally { if (helpers != null) ElevationRestart.RemoveHelpers(helpers); }
             }
             return 0;
         }

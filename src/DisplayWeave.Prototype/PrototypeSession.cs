@@ -163,6 +163,52 @@ namespace DisplayWeave.Prototype
         }
     }
 
+    // The elevated display step runs only files a non-elevated program cannot change. A short bootstrap
+    // travels on the command line: it copies the display fixture, the lease and the driver into a fresh
+    // session folder under Program Files, checks the fixture and lease against hashes compiled into this
+    // build (the fixture then checks the driver), and runs the copies. Their reports stay in that folder.
+    public static class ElevatedFixture
+    {
+        public static string ProtectedRoot { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "DisplayWeavePrototype", "sessions"); } }
+        public static string Reports(string sessionId) { return Path.Combine(ProtectedRoot, sessionId, "display"); }
+        public static readonly IDictionary<string, string> Verified = new Dictionary<string, string>
+        {
+            { "test-virtual-display.ps1", BuildHashes.Fixture }, { @"projection-x64\RegionDisplayLease.exe", BuildHashes.Lease }
+        };
+        private static readonly string[] Unverified = { @"driver\MttVDD.inf", @"driver\MttVDD.dll", @"driver\mttvdd.cat" };
+
+        // powershell.exe arguments. The script holds no double quote, so it stays one argument.
+        public static string Arguments(string source, string root, string sessionId, int seconds, IDictionary<string, string> verified)
+        {
+            var script = new StringBuilder("$ErrorActionPreference='Stop';$source=" + Quote(source) + ";$session=" + Quote(Path.Combine(root, sessionId)) +
+                ";$display=Join-Path $session 'display';$tools=Join-Path $session 'tools';$verified=@{");
+            foreach (var pair in verified) script.Append(Quote(pair.Key) + "=" + Quote(pair.Value) + ";");
+            script.Append("};$files=@($verified.Keys)+@(" + String.Join(",", Unverified.Select(Quote)) + ");try{" +
+                // Reports of sessions older than a week are removed.
+                "$parent=Split-Path -Parent $session;if(Test-Path -LiteralPath $parent){Get-ChildItem -LiteralPath $parent -Directory|" +
+                "Where-Object{$_.CreationTimeUtc -lt [DateTime]::UtcNow.AddDays(-7)}|Remove-Item -Recurse -Force -ErrorAction SilentlyContinue};" +
+                "if(Test-Path -LiteralPath $session){throw 'The protected session folder already exists.'};" +
+                "foreach($name in $files){$to=Join-Path $tools $name;New-Item -ItemType Directory -Path (Split-Path -Parent $to) -Force|Out-Null;" +
+                "Copy-Item -LiteralPath (Join-Path $source $name) -Destination $to};" +
+                "foreach($name in $verified.Keys){if((Get-FileHash -LiteralPath (Join-Path $tools $name) -Algorithm SHA256).Hash -ne $verified[$name])" +
+                "{throw ($name+' does not match this DisplayWeave Prototype build.')}}}" +
+                "catch{New-Item -ItemType Directory -Path $display -Force|Out-Null;@{error=$_.Exception.Message}|ConvertTo-Json|" +
+                "Set-Content -LiteralPath (Join-Path $display 'fatal.json');exit 1};" +
+                "& (Join-Path $tools 'test-virtual-display.ps1') -DriverPackageDirectory (Join-Path $tools 'driver') -BuildDirectory $tools -Seconds " +
+                seconds.ToString(System.Globalization.CultureInfo.InvariantCulture) + " -UseExistingPinnedPackage -SelectedAppSession -ReportDirectory $display");
+            if (script.ToString().IndexOf('"') >= 0) throw new ArgumentException("A path contains a character the elevated command cannot carry.");
+            return "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"" + script + "\"";
+        }
+
+        // PowerShell single-quoted literal; it also treats typographic single quotes as quotes.
+        private static string Quote(string text)
+        {
+            var result = new StringBuilder("'");
+            foreach (char c in text) { if (c == '\'' || (c >= '\u2018' && c <= '\u201B')) result.Append(c); result.Append(c); }
+            return result.Append('\'').ToString();
+        }
+    }
+
     // One bounded session: elevated temporary display, one window move,
     // projection (optionally modal input), coordinated release, restoration.
     public sealed class SessionWorker
@@ -210,7 +256,9 @@ namespace DisplayWeave.Prototype
                 Publish("starting", "Checking the selected app and display.");
                 string missing = Paths.MissingComponent();
                 if (missing != null) throw new InvalidOperationException("A required component is missing: " + missing);
-                if (Process.GetProcessesByName("DisplayWeave").Length != 0)
+                Process[] legacy = Process.GetProcessesByName("DisplayWeave");
+                foreach (Process process in legacy) process.Dispose();
+                if (legacy.Length != 0)
                     throw new InvalidOperationException("Exit the legacy DisplayWeave app from its tray menu first; its hooks must not touch this session.");
                 IntPtr hwnd = new IntPtr(Int64.Parse(request.SourceHwnd));
                 snapshot = Win32.Capture(hwnd);
@@ -219,13 +267,11 @@ namespace DisplayWeave.Prototype
                     throw new InvalidOperationException("The selected app closed or changed. Refresh the list and choose it again.");
 
                 Publish("awaitingApproval", "Approve the Windows administrator prompt to create the temporary display.");
-                string reports = File_("display");
+                string reports = ElevatedFixture.Reports(request.SessionId);
                 var start = new ProcessStartInfo
                 {
                     FileName = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"),
-                    Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + Paths.DisplayFixture + "\" -DriverPackageDirectory \"" + Paths.Driver +
-                        "\" -BuildDirectory \"" + Paths.Base.TrimEnd('\\') + "\" -Seconds " + Policy.LeaseSeconds +
-                        " -UseExistingPinnedPackage -SelectedAppSession -ReportDirectory \"" + reports + "\"",
+                    Arguments = ElevatedFixture.Arguments(Paths.Base, ElevatedFixture.ProtectedRoot, request.SessionId, Policy.LeaseSeconds, ElevatedFixture.Verified),
                     Verb = "runas", UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden
                 };
                 try { elevated = Process.Start(start); }
@@ -365,7 +411,7 @@ namespace DisplayWeave.Prototype
                         Publish("cleaning", "Removing the temporary display.");
                         if (!elevated.WaitForExit(180000)) problems.Add("The display cleanup helper is still running.");
                     }
-                    var fixture = elevated == null ? null : ReadFixtureResult(File_("display"));
+                    var fixture = elevated == null ? null : ReadFixtureResult(ElevatedFixture.Reports(request.SessionId));
                     bool displayClean = elevated == null || (fixture != null && JsonFile.Flag(fixture, "deviceRemoved") &&
                         JsonFile.Flag(fixture, "configurationRemoved") && JsonFile.Flag(fixture, "physicalRestored"));
                     if (elevated != null && fixture == null) problems.Add("No display cleanup result was written.");

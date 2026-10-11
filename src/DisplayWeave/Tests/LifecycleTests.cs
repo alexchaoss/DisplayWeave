@@ -179,6 +179,25 @@ namespace DisplayWeave
                 Reject(delegate { ElevationRestart.ValidatePreviousProcessId(-1, 123); });
                 Reject(delegate { ElevationRestart.ValidatePreviousProcessId(123, 123); });
             });
+            test("Administrator mode copies helpers to a fresh folder and removes only this user's earlier copies", delegate
+            {
+                string temporary = Path.Combine(Path.GetTempPath(), "DisplayWeave-helpers-" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    string source = Path.Combine(temporary, "app"), root = Path.Combine(temporary, "protected");
+                    Directory.CreateDirectory(Path.Combine(source, "native-v2-x64"));
+                    File.WriteAllText(Path.Combine(source, "native-v2-x64", "RegionHookHost.exe"), "x64 helper");
+                    string earlier = Directory.CreateDirectory(Path.Combine(root, "S-1-5-21-7_old")).FullName;
+                    string otherUser = Directory.CreateDirectory(Path.Combine(root, "S-1-5-21-70_old")).FullName;
+                    string copy = ElevationRestart.CopyHelpers(source, root, "S-1-5-21-7");
+                    Assert(File.ReadAllText(Path.Combine(copy, "native-v2-x64", "RegionHookHost.exe")) == "x64 helper" &&
+                        !Directory.Exists(Path.Combine(copy, "native-v2-x86")), "Helpers were not copied as they are.");
+                    Assert(!Directory.Exists(earlier) && Directory.Exists(otherUser), "Only this user's earlier copies may be removed.");
+                    ElevationRestart.RemoveHelpers(copy);
+                    Assert(!Directory.Exists(copy) && Directory.Exists(root), "The copy was not removed, or a folder still in use was.");
+                }
+                finally { if (Directory.Exists(temporary)) Directory.Delete(temporary, true); }
+            });
             test("Updates pick the newest app release and skip prototype tags", delegate
             {
                 Assert(Updater.Newest("0.5.5-preview", new string[] { "prototype-v9.0.0-preview", "v0.5.10-preview", "v0.5.9-preview", "v0.5.4-preview", "draft", "v1.0" }) == "0.5.10-preview",

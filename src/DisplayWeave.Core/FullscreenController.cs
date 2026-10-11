@@ -163,6 +163,12 @@ namespace DisplayWeave
     // is moved from outside, with bounded retries.
     public sealed class FullscreenController : IDisposable
     {
+        private static readonly uint OwnProcessId = (uint)Process.GetCurrentProcess().Id;
+
+        // Folder holding native-v2-x64 and native-v2-x86. An elevated host points it at a copy only
+        // administrators can change, because an elevated helper must not start from a user-writable folder.
+        public static string HelperDirectory = AppDomain.CurrentDomain.BaseDirectory;
+
         private sealed class Session
         {
             internal ApplicationIdentity Target;
@@ -224,7 +230,7 @@ namespace DisplayWeave
             if (handle == IntPtr.Zero || !IsWindow(handle) || !IsWindowVisible(handle) || GetAncestor(handle, 2) != handle ||
                 GetWindow(handle, 4) != IntPtr.Zero || GetWindowThreadProcessId(handle, out pid) == 0)
             { error = "Select a visible application main window."; return false; }
-            if (pid == (uint)Process.GetCurrentProcess().Id || pid <= 4)
+            if (pid == OwnProcessId || pid <= 4)
             { error = "Select another application."; return false; }
             if (ShellProcessProtection.IsShellProcessId(pid))
             { error = ShellProcessProtection.RejectionMessage; return false; }
@@ -326,7 +332,7 @@ namespace DisplayWeave
                 sessions.Remove(target.ProcessId);
             }
             string architecture = target.Is32Bit ? "native-v2-x86" : "native-v2-x64";
-            string helper = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, architecture, "RegionHookHost.exe");
+            string helper = Path.Combine(HelperDirectory, architecture, "RegionHookHost.exe");
             if (!File.Exists(helper) || !File.Exists(Path.Combine(Path.GetDirectoryName(helper), "RegionHook.dll")))
             { RecordFailure(target, "The " + architecture + " fullscreen helper is missing. Build the native engine first."); return false; }
             Session session = new Session { Target = target, Region = region, LayoutKey = layoutKey,
@@ -494,9 +500,10 @@ namespace DisplayWeave
             foreach (WindowCandidate window in candidates)
             {
                 if (window == null) continue;
-                ApplicationIdentity identity;
+                // ListWindows already inspected this window during the same tick.
+                ApplicationIdentity identity = window.Identity;
                 string error;
-                if (!TryInspect(window.Handle, out identity, out error)) continue;
+                if (identity == null && !TryInspect(window.Handle, out identity, out error)) continue;
                 if (!WithinExecutableScope(identity)) continue;
                 observed.Add(identity.Key);
                 Session existing;

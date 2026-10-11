@@ -202,6 +202,9 @@ namespace DisplayWeave.Prototype
             string id = Guid.NewGuid().ToString("N");
             session = Path.Combine(Paths.Sessions, id);
             Directory.CreateDirectory(session);
+            // Keep the 20 newest session folders; older ones are only history.
+            foreach (var old in new DirectoryInfo(Paths.Sessions).GetDirectories().OrderByDescending(d => d.CreationTimeUtc).Skip(20))
+                try { old.Delete(true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             var request = new SessionRequest
             {
                 SchemaVersion = 1, SessionId = id, Mode = interact.Checked ? "interactive" : "visual",

@@ -85,7 +85,8 @@ namespace DisplayWeave
             timer.Interval = 250;
             timer.Tick += delegate { service.Tick(); UpdateStatus(); };
             timer.Start();
-            if (installRoot != null && String.IsNullOrWhiteSpace(automaticExecutableFilter))
+            // Administrator mode never updates: the setup and gh would run elevated from user-writable folders.
+            if (installRoot != null && String.IsNullOrWhiteSpace(automaticExecutableFilter) && !ElevationRestart.IsElevated())
             {
                 updateTimer.Interval = 60000;
                 updateTimer.Tick += delegate { UpdateTick(); };

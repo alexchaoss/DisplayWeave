@@ -84,8 +84,13 @@ namespace DisplayWeave
             string temporary = full + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
-                using (XmlWriter writer = XmlWriter.Create(temporary, new XmlWriterSettings { Indent = true, Encoding = new UTF8Encoding(false) }))
-                    new XmlSerializer(typeof(ApplicationRules)).Serialize(writer, this);
+                // Written through to disk before it replaces the old file, so a power cut cannot leave an empty rules file.
+                using (FileStream stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+                {
+                    using (XmlWriter writer = XmlWriter.Create(stream, new XmlWriterSettings { Indent = true, Encoding = new UTF8Encoding(false) }))
+                        new XmlSerializer(typeof(ApplicationRules)).Serialize(writer, this);
+                    stream.Flush(true);
+                }
                 if (File.Exists(full)) File.Replace(temporary, full, null);
                 else File.Move(temporary, full);
             }

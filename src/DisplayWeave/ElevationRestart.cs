@@ -60,6 +60,49 @@ namespace DisplayWeave
                 throw new ArgumentException("DisplayWeave cannot wait for its own process to exit.", "processId");
         }
 
+        // Folder under Program Files for administrator mode; only administrators can change it.
+        public static string HelperRoot { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "DisplayWeave"); } }
+
+        public static string UserSid()
+        {
+            using (WindowsIdentity identity = WindowsIdentity.GetCurrent()) return identity.User.Value;
+        }
+
+        // An elevated process must not start helpers from the user-writable install folder, so administrator
+        // mode copies them to a fresh folder under root. This user's earlier copies are removed first unless an
+        // app still holds their hook DLL; SIDs never contain '_', so another user's folders never match.
+        public static string CopyHelpers(string source, string root, string userSid)
+        {
+            if (Directory.Exists(root))
+                foreach (string old in Directory.GetDirectories(root, userSid + "_*"))
+                    RemoveFolder(old);
+            string target = Path.Combine(root, userSid + "_" + Guid.NewGuid().ToString("N"));
+            foreach (string architecture in new[] { "native-v2-x64", "native-v2-x86" })
+            {
+                string from = Path.Combine(source, architecture);
+                if (!Directory.Exists(from)) continue; // a development build without native files reports it when attaching
+                string to = Directory.CreateDirectory(Path.Combine(target, architecture)).FullName;
+                foreach (string file in Directory.GetFiles(from)) File.Copy(file, Path.Combine(to, Path.GetFileName(file)));
+            }
+            return target;
+        }
+
+        // Best effort at exit; a copy still in use is removed by a later administrator start.
+        public static void RemoveHelpers(string target)
+        {
+            RemoveFolder(target);
+            try { Directory.Delete(Path.GetDirectoryName(target)); } // only when empty
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+
+        private static void RemoveFolder(string folder)
+        {
+            try { Directory.Delete(folder, true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+
         private static string FullPath(string path, string parameter)
         {
             if (String.IsNullOrWhiteSpace(path)) throw new ArgumentException("A path is required.", parameter);

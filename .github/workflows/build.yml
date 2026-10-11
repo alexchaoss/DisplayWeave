@@ -74,8 +74,8 @@ jobs:
               $problems.Add("Managed test report has failures or no passing summary: $file")
             }
           }
-          if ($passed -lt 99) {
-            $problems.Add("Expected at least 99 passing managed tests; found $passed.")
+          if ($passed -lt 100) {
+            $problems.Add("Expected at least 100 passing managed tests; found $passed.")
           }
 
           foreach ($architecture in @('x64', 'x86')) {

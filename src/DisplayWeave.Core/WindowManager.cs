@@ -10,6 +10,8 @@ namespace DisplayWeave
     {
         public IntPtr Handle;
         public string Title;
+        // The app behind the window, read when it was listed.
+        public ApplicationIdentity Identity;
 
         public override string ToString()
         {
@@ -56,7 +58,8 @@ namespace DisplayWeave
             EnumWindowsDelegate callback = delegate(IntPtr handle, IntPtr parameter)
             {
                 string title;
-                if (IsEligible(handle, out title)) result.Add(new WindowCandidate { Handle = handle, Title = title });
+                ApplicationIdentity identity;
+                if (IsEligible(handle, out title, out identity)) result.Add(new WindowCandidate { Handle = handle, Title = title, Identity = identity });
                 return true;
             };
             Native.EnumWindows(callback, IntPtr.Zero);
@@ -68,9 +71,10 @@ namespace DisplayWeave
             return result;
         }
 
-        private static bool IsEligible(IntPtr handle, out string title)
+        private static bool IsEligible(IntPtr handle, out string title, out ApplicationIdentity identity)
         {
             title = String.Empty;
+            identity = null;
             if (handle == IntPtr.Zero || !Native.IsWindow(handle) || !Native.IsWindowVisible(handle) ||
                 handle == Native.GetDesktopWindow() || handle == Native.GetShellWindow() || Native.GetAncestor(handle, 2) != handle)
                 return false;
@@ -91,7 +95,6 @@ namespace DisplayWeave
             if (title.Length == 0) return false;
             // Eligibility must exclude the entire Explorer/shell process: a
             // folder HWND can share process-wide hooks with the desktop/taskbar.
-            ApplicationIdentity identity;
             string rejection;
             return FullscreenController.TryInspect(handle, out identity, out rejection);
         }

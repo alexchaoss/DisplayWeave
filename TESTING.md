@@ -212,6 +212,46 @@ release, pause and exit return a still-maximized window to its monitor's work ar
   user's running 0.5.1 attached to automatically, which invalidated that run.
 - Not yet verified with Diablo IV or any real game.
 
+## Security and speed fixes (October 11, 2026)
+
+Fixes from a repository audit:
+- Legacy administrator mode never checks for updates. Its native helpers start from
+  a copy in `%ProgramFiles%\DisplayWeave\<user SID>_<id>`, removed at exit or at the
+  next administrator start.
+- The prototype's administrator step is an inline bootstrap. It copies the display
+  fixture, lease and driver into `%ProgramFiles%\DisplayWeavePrototype\sessions\<id>`,
+  checks the fixture and lease against hashes compiled into the build, then runs
+  the copies. Display reports are written there.
+- `rules.xml` is written through to disk before it replaces the old file.
+- `fetch-tools.ps1` pins Zig's SHA-256; the unused MinHook download was removed.
+- An engine tick reuses the identity `ListWindows` read. With 3 app windows, one
+  pass now costs 0.60 ms per tick; before, it was 0.58 ms plus a 0.15 ms second pass.
+- `install.ps1` online mode picks the highest version, as the app's updater does.
+  Checked on sample tags: `v0.5.10 > v0.5.10-preview > v0.5.9 > v0.5.4-hotfix`,
+  with `prototype-v*` excluded.
+- The prototype disposes its process objects and keeps the 20 newest session folders.
+
+Checks:
+- `scripts/release.ps1`: managed 100 (layout 19, rules 40, automatic 13,
+  lifecycle 28). The new case covers the helper copy and pruning only this user's
+  earlier copies. Native checks passed, installer tests 20, setup tests 6.
+- `build-projection.ps1 -Architecture all -RunSelfTests`: presenter 118, lease
+  219, plan 101 and input 57 on x64 and x86.
+- `build-prototype.ps1 -RunSelfTests`: self-tests 40, including bootstrap quoting,
+  pinned hashes, length and report location. `tests/prototype-elevation-tests.ps1`
+  passed 6. It runs the bootstrap unelevated against a temporary root, with a
+  stand-in fixture and an install path containing `'` and `’`. The copies ran with
+  the session arguments, and week-old sessions were removed. A changed lease
+  stopped the bootstrap before the fixture ran, and the mismatch was reported in
+  `fatal.json`.
+- `package-prototype.ps1`; prototype installer tests 10.
+- Not run:
+  - an elevated legacy session or a real prototype display session, because both
+    need an administrator prompt and change the desktop;
+  - the live controller integration fixture;
+  - a PowerShell 7 build, because pwsh is not installed here. The bootstrap test
+    always runs under Windows PowerShell.
+
 ## Engine library without the UI (October 11, 2026)
 
 The region engine moved to `src/DisplayWeave.Core` and builds as

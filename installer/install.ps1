@@ -235,11 +235,13 @@ function Get-PrivateRelease([string]$Destination) {
     $tag = $Version
     if ([string]::IsNullOrWhiteSpace($tag)) {
         # GitHub's /releases/latest omits prereleases. DisplayWeave previews
-        # should update to the newest published release, including previews;
+        # should update to the highest release version, including previews, as
+        # the app's updater does; a final release beats its own previews.
         # prototype-v* tags belong to the separate prototype app.
         $listText = & $gh.Source release list --repo $Repository --limit 100 --json tagName,isDraft,publishedAt
         if ($LASTEXITCODE -ne 0) { throw "Cannot list private releases. Check gh auth status and access to $Repository." }
-        $published = @(($listText -join [Environment]::NewLine | ConvertFrom-Json) | Where-Object { -not $_.isDraft -and $_.tagName -match '^v[0-9]' } | Sort-Object publishedAt -Descending)
+        $published = @(($listText -join [Environment]::NewLine | ConvertFrom-Json) | Where-Object { -not $_.isDraft -and $_.tagName -match '^v[0-9]+\.[0-9]+\.[0-9]+' } |
+            Sort-Object { [version]($_.tagName -replace '^v([0-9]+\.[0-9]+\.[0-9]+).*$', '$1') }, { $_.tagName -notmatch '^v[0-9.]+-' }, publishedAt -Descending)
         if ($published.Count -eq 0) { throw 'No published DisplayWeave releases were found.' }
         $tag = [string]$published[0].tagName
     }
