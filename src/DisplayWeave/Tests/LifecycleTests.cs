@@ -16,6 +16,11 @@ namespace DisplayWeave
                 try { body(); passed++; report.AppendLine("PASS " + name); }
                 catch (Exception ex) { failed++; report.AppendLine("FAIL " + name + ": " + ex.Message); }
             };
+            test("The compiled-in version is a release version", delegate
+            {
+                Assert(System.Text.RegularExpressions.Regex.IsMatch(Program.Version, @"^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$"),
+                    "The window would show an invalid version: " + Program.Version);
+            });
             test("Defaults use the executable directory without changing startup state", delegate
             {
                 AppOptions options = AppOptions.Parse(new string[0]);

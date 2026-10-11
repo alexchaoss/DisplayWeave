@@ -502,6 +502,16 @@ static int PolicySelfTest() {
         if (RS_IsIncompatibleLauncher(launcherCases[i].value) != launcherCases[i].blocked)
             return Error("Launcher compatibility policy self-test failed", ERROR_INVALID_DATA);
     }
+    const TextCase chromiumCases[] = {
+        {L"Chrome_WidgetWin_1", true}, {L"Chrome_WidgetWin_0", true}, {L"Chrome_WidgetWin_2", true},
+        {L"chrome_widgetwin_1", false}, {L"Chrome_WidgetWin", false}, {L"Chrome_RenderWidgetHostHWND", false},
+        {L"MyChrome_WidgetWin_1", false}, {L"WindowsForms10.Window.8.app.0.1", false}, {L"", false}, {NULL, false}
+    };
+    for (size_t i = 0; i < sizeof(chromiumCases) / sizeof(chromiumCases[0]); ++i) {
+        ++count;
+        if (RS_IsChromiumWindowClass(chromiumCases[i].value) != chromiumCases[i].blocked)
+            return Error("Chromium window policy self-test failed", ERROR_INVALID_DATA);
+    }
     for (size_t i = 0; i < sizeof(processCases) / sizeof(processCases[0]); ++i) {
         ++count;
         if (RS_IsShellProcessName(processCases[i].value) != processCases[i].blocked)
@@ -818,6 +828,10 @@ static bool ValidateNonShellTarget(DWORD pid, HWND hwnd, HANDLE process,
     if (RS_IsShellWindowClass(className)) {
         reason = "Windows desktop, taskbar, and Explorer windows cannot be controlled";
         error = ERROR_ACCESS_DENIED; return false;
+    }
+    if (RS_IsChromiumWindowClass(className)) {
+        reason = "Chromium windows are excluded because hooking their window handling makes them stop themselves";
+        error = ERROR_NOT_SUPPORTED; return false;
     }
     wchar_t imagePath[32768];
     DWORD imageLength = static_cast<DWORD>(sizeof(imagePath) / sizeof(imagePath[0]));

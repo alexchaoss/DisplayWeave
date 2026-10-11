@@ -93,8 +93,7 @@ namespace DisplayWeave
             Native.GetWindowText(handle, text, text.Capacity);
             title = text.ToString().Trim();
             if (title.Length == 0) return false;
-            // Eligibility must exclude the entire Explorer/shell process: a
-            // folder HWND can share process-wide hooks with the desktop/taskbar.
+            // Excludes the shell process except its folder windows, which are only ever moved from outside.
             string rejection;
             return FullscreenController.TryInspect(handle, out identity, out rejection);
         }

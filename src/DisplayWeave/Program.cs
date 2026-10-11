@@ -10,6 +10,14 @@ namespace DisplayWeave
     internal static class Program
     {
         internal static readonly int ShowSettingsMessage = (int)RegisterWindowMessage("DisplayWeave.ShowSettings.1");
+        // version.txt, compiled in by scripts/build.ps1, so portable and development copies know it too.
+        internal static readonly string Version = ReadVersion();
+
+        private static string ReadVersion()
+        {
+            using (Stream stream = typeof(Program).Assembly.GetManifestResourceStream("DisplayWeave.version.txt"))
+                return stream == null ? "(unknown version)" : new StreamReader(stream).ReadToEnd().Trim();
+        }
         internal static readonly int ExitForUpdateMessage = (int)RegisterWindowMessage("DisplayWeave.ExitForUpdate.1");
 
         [STAThread]

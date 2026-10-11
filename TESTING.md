@@ -29,6 +29,160 @@ release, pause and exit return a still-maximized window to its monitor's work ar
   user's running 0.5.1 attached to automatically, which invalidated that run.
 - Not yet verified with any real game.
 
+## App icon and repository cleanup (0.5.9-preview, October 11, 2026)
+
+0.5.9 is the first published build of the unpublished local 0.5.8 work, plus a new app
+icon (`src/DisplayWeave/app.ico`, 16 to 256 px) compiled into `DisplayWeave.exe` and the
+setup; the main window and the tray use it. Cleanup: MinHook keeps only its sources,
+headers and license (no upstream build, CMake or CI files); `tests/test-handoff.ps1`,
+which expected the 0.4 `CAPS 3` capability and failed on every 0.5.x helper, was
+removed; the unused `FullscreenController.AutomaticPendingCount` was removed.
+
+- `scripts/release.ps1` passed: managed 108 (layout 20, rules 46, automatic 13,
+  lifecycle 29), native policy and IPC on x64 and x86, installer 20, setup 6.
+- The shell icon read from both `DisplayWeave.exe` and the setup is the new icon.
+- Installed with the setup (`--quiet`, started through `Win32_Process.Create` so the
+  relaunched app is not tied to the agent shell): it replaced the running 0.5.8, and
+  0.5.9 runs from `versions\0.5.9-preview`.
+- Not checked by eye: the title-bar and tray icon at 125% scaling.
+
+## Shorter full-width flash for the outside fit (0.5.8-preview, October 11, 2026)
+
+Reported: every maximize flashes. All of the user's open apps are Chromium-based or
+folder windows, so they only get the outside fit: Windows maximizes the window to the
+whole display and DisplayWeave fitted it on its next 250 ms timer tick. An app with a
+working component is resized inside the app before Windows applies the maximize, so it
+does not flash; using the outside fit for every app would add the flash to those.
+
+Change: `MaximizeWatcher` (DisplayWeave.Core) listens to `EVENT_OBJECT_LOCATIONCHANGE`
+with an out-of-context WinEvent hook (`WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS`;
+nothing is loaded into other apps) and calls the UI's tick as soon as a top-level
+window becomes maximized. Moves of an already maximized window, such as the fit itself,
+do not trigger it. The 250 ms timer still runs; a re-entrant tick is skipped.
+
+Checks, x64 Windows 11, 7680 x 2100 work area at 125%:
+- Self-tests: managed 108 (rules 46; the new case checks a maximize is reported once per
+  change and again after a restore, and not for the fit's own move).
+- Timing harness, the user's DisplayWeave exited first so only the harness moved the
+  window: one folder window on a unique scratch folder, restored in region 1 and
+  maximized 5 times, its DWM frame polled every 1 ms (about 16 ms resolution). With the
+  timer only it stayed full width for 63 to 171 ms (median 170; one trial missed both
+  states). With the maximize event it stayed full width for one poll interval (16 ms)
+  in all 5 trials. The slowest tick, window listing included, took 31 ms.
+- `scripts/release.ps1` passed (managed 108, native policy 233, installer 20, setup 6);
+  the unpublished local 0.5.8 folder was replaced and installed with the setup. With
+  only the installed app moving the window, the same 5 maximizes stayed full width for
+  16 ms each, and no helper was started.
+- On screen, installed app: a one-pixel row from x 1990 to 7590 was read from the screen
+  once per composed frame (`DwmFlush`) for 700 ms after each of 5 maximizes and compared
+  in memory with the row before; nothing was saved. With Windows' animation on, the
+  window never covered the row (at most 8% of it changed for a folder window and 4% for
+  an owned Chromium-based browser window, the same as other apps redrawing). With the window's transitions
+  disabled from DisplayWeave's process (`DWMWA_TRANSITIONS_FORCEDISABLED`, S_OK), the
+  full-width window covered all of it for at least one frame in every trial. The
+  animation hides the frame, so DisplayWeave leaves animations alone (user decision).
+
+## Folder windows maximize into regions (0.5.8-preview, October 11, 2026)
+
+Asked: the user's File Explorer windows should maximize into a region while the
+desktop stays full width. They were excluded entirely as shell windows.
+
+Changes:
+- `TryInspect` accepts a `CabinetWClass` or `ExploreWClass` window even in the shell's
+  process (`ShellProcessProtection.IsFolderWindow`). Every other shell window, class
+  and executable is still refused.
+- A folder window only ever gets the outside maximize fit (`OutsideOnlyReason`, shared
+  with Chromium windows): an explicit Force is refused with `FolderMessage`, and the
+  native helper still refuses these classes. Status & help lists it as Ready with that
+  reason.
+
+Checks, x64 Windows 11, 7680 x 2100 work area at 125%:
+- Self-tests: managed 107 (layout 20, rules 45, automatic 13, lifecycle 29). The new
+  rules case: explicit and saved-rule attaches of a folder window are refused without a
+  helper or failure; the desktop, taskbar and `SHELLDLL_DefView` classes are not folder
+  windows; a hidden, maximized folder-class window with a Force rule is fitted to region
+  2 and listed as fitted from outside with the folder reason. The Explorer protection
+  case now uses the desktop class.
+- Live, engine hosted against one folder window opened on a unique scratch folder: its
+  `explorer.exe` window was listed, restored inside region 2, maximized and fitted from
+  `-9,-9,7689,2109` to frame `1980,0,5700,2100` in one tick, then restored to its
+  original rectangle. Work area `0,0,7680,2100`, desktop `0,0,7680,2160` and taskbar
+  `0,2100,7680,2160` were identical before, during and after. The test window was
+  closed by its own handle, and the user's other folder windows stayed open.
+- `scripts/release.ps1` passed (managed 107, native policy 233, installer 20, setup 6). The
+  unpublished local 0.5.8 folder was replaced and installed with the setup. Under the
+  running app, a folder window restored inside region 3 and then maximized landed on
+  frame `5700,0,7680,2100` within 0.5 s, stayed there for 4.5 s, and restored to its
+  original rectangle. No helper was started.
+
+## Chromium windows are never hooked (0.5.8-preview, October 11, 2026)
+
+Reported: the user's browser crashed repeatedly right after 0.5.6 was installed. Its
+three Crashpad dumps (15:11:26, 15:11:40, 15:12:47) show the same deliberate Chromium
+breakpoint (`0x80000003`) at the same offset in the browser engine DLL, on a thread handling window
+messages, with DisplayWeave 0.5.6's `RegionHook.dll` in the window-procedure chain (and
+a third-party display tool's DLL). This matches the 0.4.3 launcher crashes. 0.5.5 had
+never really hooked the browser: its resident-hook refusal (1306) blocked it by
+accident. 0.5.6's fix made automatic handling attach, and the browser began to crash. A
+desktop app built on the same engine was attached too. The user's DisplayWeave was
+closed gracefully to stop it.
+
+Changes:
+- 0.5.7 was a local-only build of this fix; 0.5.8 adds the Ready state below.
+- `ChromiumWindowProtection`: a window whose class starts with `Chrome_WidgetWin_` never
+  gets a helper. Automatic handling and Force rules use the outside maximize fit, its
+  row explains why, and an explicit attach is refused with that message.
+- The native preflight refuses the same class with error 50, before any mapping or
+  load.
+- After installing 0.5.7 the user reported that DisplayWeave detected no apps. Every open
+  app was Chromium-based and not maximized, so nothing was listed until a maximize. Such a
+  window is now listed each tick as **Ready**, with its region and the reason nothing is
+  loaded (`HandledAppState.Ready`). The header counts these apps too ("N handled"); it
+  used to count only hooked apps as "ready".
+- The window title and tray tooltip show the version, compiled in from `version.txt` by
+  `scripts/build.ps1`, so portable and development copies show it too.
+
+Checks, x64 Windows 11, 7680 x 2100 work area at 125%:
+- `scripts/release.ps1` at 0.5.7-preview: managed 104 (layout 20, rules 43, automatic 13,
+  lifecycle 28); native policy 233 on x64 and x86 (ten Chromium class cases), IPC,
+  installer 20, setup 6. The new rules case: explicit and saved-rule attaches of a
+  Chromium-class window are refused with the explanation, start no helper and record no
+  failure; near-miss classes stay eligible.
+- Live, an owned window registered as `Chrome_WidgetWin_1`: the 0.5.7 helper exited with
+  "Chromium windows are excluded ... (Windows error 50)". No `RegionHook.dll` was loaded
+  and no `Local\DisplayWeave_<pid>` mapping was created.
+- Installed with the setup (`--quiet --no-launch`) and started through the sign-in
+  command. With 26 Chromium-family processes running, 0.5.7 started no helper; 0.5.6 had
+  attached to the browser and a desktop app within seconds.
+- 0.5.8-preview: `scripts/release.ps1` managed 105 (layout 20, rules 43, automatic 13,
+  lifecycle 29; the new cases list a Chromium window with a rule as Ready in its region
+  without a helper, and check the compiled-in version), native policy 233, installer 20,
+  setup 6. Installed with the setup and started through the sign-in command.
+- Live with 0.5.8 running: an owned `Chrome_WidgetWin_1` window maximized to exactly
+  `0,0,1980,2100` (region 1), with no helper and no DLL, and restored to its original
+  rectangle. The running window's title read "DisplayWeave 0.5.8-preview". Status & help
+  listed the user's three open Chromium-based apps as Ready in regions 2, 3 and 1, and
+  the header read "3 handled · 0 attaching".
+- With that 0.5.8 installed, the user reported that no app stayed in its region when
+  maximized: each filled the whole display. An owned Chromium-based browser (throwaway profile)
+  showed why. The engine did fit the window, but Chromium reset every move of its
+  maximized window in `WM_WINDOWPOSCHANGING`. The window stayed at `-9,-9,7689,2109`
+  until the fit gave up after four tries ("keeps changing its maximized size").
+- Fix, still 0.5.8-preview: the outside fit and its undo pass `SWP_NOSENDCHANGING`, so
+  Windows applies the move without asking the window. A plain move stayed refused, and
+  a move with that flag landed on frame `0,0,1980,2100` while the window stayed
+  maximized. The window kept that frame through z-order, frame-change and foreground
+  changes, and restored to its original rectangle. After a minimize and restore,
+  Windows maximized it to the whole display again, as for a new maximize.
+- New rules case: a hidden, maximized window that refuses moves in
+  `WM_WINDOWPOSCHANGING` is fitted to its region. It failed before the fix.
+  `scripts/release.ps1`: managed 106 (layout 20, rules 44, automatic 13, lifecycle 29),
+  native policy 233, installer 20, setup 6.
+- The local 0.5.8 folder was replaced (unpublished) and installed with the setup. Under
+  the running app, the owned browser window maximized from region 1 to frame
+  `0,0,1980,2100` within 0.5 s, with no helper started.
+- Not run: maximizing the user's own Chromium-based apps.
+
 ## Presets and attaching without an app restart (October 11, 2026)
 
 Reported: the user's browser (PID 3144, running since October 8) failed with "Restart the target

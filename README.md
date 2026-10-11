@@ -62,7 +62,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
 Run the same script again to install the newest published release, including
-preview releases. To choose a release, add `-Version v0.5.6-preview`.
+preview releases. To choose a release, add `-Version v0.5.9-preview`.
 The script verifies the release ZIP's SHA-256 checksum before installation.
 It does not request administrator rights or store a GitHub token.
 
@@ -70,7 +70,7 @@ You can also download the ZIP and its `.sha256` file from the releases page and
 install without the GitHub CLI:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -PackagePath .\DisplayWeave-0.5.6-preview.zip -ChecksumPath .\DisplayWeave-0.5.6-preview.zip.sha256
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -PackagePath .\DisplayWeave-0.5.9-preview.zip -ChecksumPath .\DisplayWeave-0.5.9-preview.zip.sha256
 ```
 
 The default installation is `%LOCALAPPDATA%\DisplayWeave`. Each release has its
@@ -110,9 +110,16 @@ for detailed activity, shortcuts, and Exit. **Save layout** and **Pause handling
 **Resume handling** stay visible on every tab. The bottom activity line opens
 Status & help when clicked; hover it to read a longer message.
 
+The window title and the tray icon's tooltip show the installed version.
+
 **Status & help** lists every app DisplayWeave handles or tried to handle, with its
-display, region and status: **Working**, **Starting**, **Not active**, **Fitted from
-outside** or **Error**. Select a row to read exactly what happened and what to do.
+display, region and status: **Working**, **Starting**, **Not active**, **Ready**, **Fitted
+from outside** or **Error**. **Ready** means nothing is loaded into the app and it is
+fitted into its region from outside once maximized, as for Chromium-based apps. Windows
+first maximizes such a window to the whole display and DisplayWeave fits it within about
+one frame; Windows' maximize animation hides that frame. With window animations turned
+off in Windows, the full-width frame can show briefly. An app with a working component
+goes straight to its region. Select a row to read exactly what happened and what to do.
 The status at the top right opens this list. When the layout's display is missing
 or its regions no longer fit it, the status reads **Layout needs attention** and the
 message names the displays Windows reports. Another display or region tool can
@@ -165,10 +172,12 @@ rules for each application. Normal restore or leaving fullscreen returns an
 automatically managed app to its previous normal placement.
 
 The Windows desktop, taskbar, Start menu, and shell processes are always excluded,
-including from manual Force rules. File Explorer is also excluded because its
-folder windows can share the process that runs the desktop and taskbar. Version
-0.3.3 enforces this in both the application and native helper, before hooks are
-installed. Region layouts apply only to eligible application windows.
+including from manual Force rules, and keep their full size. File Explorer folder
+windows can share the process that runs the desktop and taskbar, so nothing is ever
+loaded into them either. From 0.5.9, a maximized folder window is fitted into its
+region from outside, as for Chromium-based apps, and Status & help lists it as Ready.
+Since 0.3.3 the application and native helper both refuse shell hooks before they
+are installed. Region layouts apply only to eligible application windows.
 
 **X closes the settings window to the system tray**, keeping region handling
 running. Double-click the tray icon, choose **Open DisplayWeave**, or launch the
@@ -219,6 +228,16 @@ fullscreen" modes still fill the monitor. Each move resizes the app's window; in
 overlays from other programs that hook a game's graphics can crash some games on a
 resize, so disable them if that happens.
 A rules file containing a Maximize in region rule cannot be read by 0.5.1 or older.
+
+## Chromium-based apps
+
+Browsers and desktop apps built on Chromium stop themselves (a deliberate crash) when
+their window handling is hooked. From 0.5.9, DisplayWeave never loads anything into a
+window of Chromium's `Chrome_WidgetWin_*` class: automatic handling and Force rules
+use the outside maximize fit described above, and a manual Force request explains why.
+The native helper refuses these windows too. Their own fullscreen mode still fills the
+monitor. An app hooked by 0.5.6 keeps that component until it restarts; it does nothing
+while no DisplayWeave helper controls it, but restart the app if it still crashes.
 
 ## Launcher exclusion
 
@@ -371,8 +390,8 @@ These commands apply to the source project, not the portable ZIP.
 ```
 
 `fetch-tools.ps1` downloads Zig 0.13.0 and checks it against a SHA-256 pinned in the
-script. MinHook v1.3.4 is vendored with its license. The toolchain stays inside the
-workspace.
+script. MinHook v1.3.4 is vendored as sources and license only. The toolchain stays
+inside the workspace.
 The C# build uses Windows' .NET Framework compiler. Native integration tests open
 temporary DirectX test windows and attach only to those test processes. The monitor fixture keeps its Direct3D swapchain windowed throughout. Legacy DXGI
 fixtures remain available for testing older resident components only.

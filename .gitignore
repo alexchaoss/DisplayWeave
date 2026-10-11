@@ -26,7 +26,7 @@
 /rules.xml.*
 *.tmp
 
-# Editor state. Keep MinHook's upstream build/ project files.
+# Editor state.
 /.vs/
 /.vscode/
 *.suo

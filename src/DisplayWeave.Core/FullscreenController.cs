@@ -38,9 +38,24 @@ namespace DisplayWeave
         }
     }
 
+    // Chromium stops itself with a breakpoint when its window handling is hooked (observed in a
+    // browser and a launcher), so its windows only ever get the outside maximize fit.
+    internal static class ChromiumWindowProtection
+    {
+        internal const string Message = "Apps built on Chromium stop themselves when their window handling is hooked, " +
+            "so DisplayWeave never loads anything into them. A maximized window is fitted into its region from outside instead.";
+
+        internal static bool IsChromiumWindow(string windowClass)
+        {
+            return windowClass != null && windowClass.StartsWith("Chrome_WidgetWin_", StringComparison.Ordinal);
+        }
+    }
+
     internal static class ShellProcessProtection
     {
         internal const string RejectionMessage = "Windows desktop, taskbar, and shell processes cannot be assigned to regions. Their hooks would also affect the desktop.";
+        internal const string FolderMessage = "File Explorer folder windows share their process with the desktop and taskbar, so DisplayWeave never loads " +
+            "anything into them. A maximized folder window is fitted into its region from outside; the desktop and taskbar keep their full size.";
 
         private static readonly HashSet<string> ProtectedExecutables = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -63,7 +78,13 @@ namespace DisplayWeave
                 String.Equals(windowClass, "Shell_TrayWnd", StringComparison.OrdinalIgnoreCase) ||
                 String.Equals(windowClass, "Shell_SecondaryTrayWnd", StringComparison.OrdinalIgnoreCase) ||
                 String.Equals(windowClass, "SHELLDLL_DefView", StringComparison.OrdinalIgnoreCase) ||
-                String.Equals(windowClass, "CabinetWClass", StringComparison.OrdinalIgnoreCase) ||
+                IsFolderWindow(windowClass);
+        }
+
+        // A folder window is its own top-level window: moving it from outside never touches the desktop or taskbar.
+        internal static bool IsFolderWindow(string windowClass)
+        {
+            return String.Equals(windowClass, "CabinetWClass", StringComparison.OrdinalIgnoreCase) ||
                 String.Equals(windowClass, "ExploreWClass", StringComparison.OrdinalIgnoreCase);
         }
 
@@ -156,7 +177,8 @@ namespace DisplayWeave
         }
     }
 
-    public enum HandledAppState { Starting, Working, NotActive, FittedFromOutside, Error }
+    // Ready: nothing is loaded into the app; it is fitted into its region from outside once maximized.
+    public enum HandledAppState { Starting, Working, NotActive, FittedFromOutside, Error, Ready }
 
     // One app DisplayWeave handles or tried to handle, for status lists.
     public sealed class HandledApp
@@ -171,9 +193,9 @@ namespace DisplayWeave
 
     // UI-thread coordinator. All fullscreen interception occurs in the selected
     // process through the architecture-matched native helper, never a resize loop.
-    // The one exception is for apps without a working component (a MaximizeInRegion rule, or
-    // automatic/Force handling after the component failed): only a window the user maximized
-    // is moved from outside, with bounded retries.
+    // The one exception is for apps without a working component (a MaximizeInRegion rule,
+    // automatic/Force handling after the component failed, Chromium and folder windows): only a
+    // window the user maximized is moved from outside, with bounded retries.
     public sealed class FullscreenController : IDisposable
     {
         private static readonly uint OwnProcessId = (uint)Process.GetCurrentProcess().Id;
@@ -219,6 +241,8 @@ namespace DisplayWeave
         private readonly Dictionary<IntPtr, MaximizedFit> maximized = new Dictionary<IntPtr, MaximizedFit>();
         // Listed windows whose saved rule names a missing region or monitor, from the latest tick.
         private readonly List<HandledApp> ruleProblems = new List<HandledApp>();
+        // Listed windows that only get the outside maximize fit and are not maximized, from the latest tick.
+        private readonly List<HandledApp> readyApps = new List<HandledApp>();
         // Apps whose handling threw; left alone until their window closes, a Force or a resume.
         private readonly HashSet<string> faulted = new HashSet<string>(StringComparer.Ordinal);
         // Self-tests only: runs at the start of each window's handling, so a test can make one app fail.
@@ -239,8 +263,9 @@ namespace DisplayWeave
         public int Count { get { int count = 0; foreach (Session s in sessions.Values) if (s.Enabled && s.Ready) count++; return count; } }
         public int PendingCount { get { int count = 0; foreach (Session s in sessions.Values) if (s.Enabled && !s.Ready) count++; return count; } }
         public int AutomaticCount { get { int count = 0; foreach (Session s in sessions.Values) if (s.Automatic && s.Enabled && s.Ready) count++; return count; } }
-        public int AutomaticPendingCount { get { int count = 0; foreach (Session s in sessions.Values) if (s.Automatic && s.Enabled && !s.Ready) count++; return count; } }
         public int FailureCount { get { return failureHistory.Count; } }
+        // Windows handled from outside (Ready or fitted) in the latest tick; nothing is loaded into them.
+        public int OutsideFitCount { get { return readyApps.Count; } }
         // An app maximized or fullscreen in a region, or not yet reporting its state; restarting DisplayWeave would resize it.
         public bool HasExpandedApp { get { if (maximized.Count > 0) return true; foreach (Session s in sessions.Values) if (s.Enabled && s.NativeExpanded != false) return true; return false; } }
         // Test scope only: automatic preparation is limited to this exact executable path when set.
@@ -259,6 +284,8 @@ namespace DisplayWeave
                 if (!apps.ContainsKey(fit.Target.Key))
                     apps[fit.Target.Key] = new HandledApp { Target = fit.Target, Region = fit.Region, Error = fit.Reason ?? String.Empty,
                         State = fit.Attempts >= MaximumFitAttempts ? HandledAppState.Error : HandledAppState.FittedFromOutside };
+            foreach (HandledApp ready in readyApps)
+                if (!apps.ContainsKey(ready.Target.Key)) apps[ready.Target.Key] = ready;
             foreach (HandledApp problem in ruleProblems) apps[problem.Target.Key] = problem;
             foreach (ApplicationIdentity target in failureHistory.Targets)
             {
@@ -279,12 +306,12 @@ namespace DisplayWeave
             { error = "Select a visible application main window."; return false; }
             if (pid == OwnProcessId || pid <= 4)
             { error = "Select another application."; return false; }
-            if (ShellProcessProtection.IsShellProcessId(pid))
-            { error = ShellProcessProtection.RejectionMessage; return false; }
             StringBuilder className = new StringBuilder(256);
             GetClassName(handle, className, className.Capacity);
             string cls = className.ToString();
-            if (ShellProcessProtection.IsExcludedWindowClass(cls))
+            // A folder window may run in the shell's process; it is only ever moved from outside, never hooked.
+            bool folder = ShellProcessProtection.IsFolderWindow(cls);
+            if (!folder && (ShellProcessProtection.IsShellProcessId(pid) || ShellProcessProtection.IsExcludedWindowClass(cls)))
             { error = ShellProcessProtection.RejectionMessage; return false; }
             if (cls.Length == 0) { error = "The application window class could not be read."; return false; }
             IntPtr process = OpenProcess(0x1000, false, pid);
@@ -300,7 +327,7 @@ namespace DisplayWeave
                 { error = "Windows did not expose the application's identity or architecture."; return false; }
                 if (LauncherProcessProtection.IsExcludedExecutable(path.ToString()))
                 { error = LauncherProcessProtection.RejectionMessage; return false; }
-                if (ShellProcessProtection.IsExcludedExecutable(path.ToString()))
+                if (!folder && ShellProcessProtection.IsExcludedExecutable(path.ToString()))
                 { error = ShellProcessProtection.RejectionMessage; return false; }
                 identity = new ApplicationIdentity { Handle = handle, ProcessId = pid, CreationTime = creation,
                     ExecutablePath = path.ToString(), WindowClass = cls, Is32Bit = !Environment.Is64BitOperatingSystem || wow64 };
@@ -327,6 +354,12 @@ namespace DisplayWeave
                     Stop(excludedSession);
                     sessions.Remove(target.ProcessId);
                 }
+                return false;
+            }
+            string outsideOnly = OutsideOnlyReason(target.WindowClass);
+            if (outsideOnly != null)
+            {
+                LastMessage = outsideOnly;
                 return false;
             }
             if (IsProtectedShellTarget(target))
@@ -419,6 +452,7 @@ namespace DisplayWeave
             if (disposed) return;
             PruneClosedFailures();
             ruleProblems.Clear();
+            readyApps.Clear();
             List<Rectangle> layoutRegions;
             bool validLayout = TryResolveLayout(layout, out layoutRegions);
             string layoutKey = null;
@@ -601,12 +635,12 @@ namespace DisplayWeave
                     if (mode == RegionControlMode.Maximize)
                     {
                         Disable(existing);
-                        FitMaximized(identity, region);
+                        FitFromOutside(identity, region);
                         continue;
                     }
                     if (mode == RegionControlMode.Force)
                     {
-                        if (existing == null && failed.Contains(identity.Key)) FitMaximized(identity, region);
+                        if (existing == null && OutsideFitOnly(identity)) FitFromOutside(identity, region);
                         else AttachCore(identity, region, false, false, layoutRegions);
                         continue;
                     }
@@ -627,8 +661,8 @@ namespace DisplayWeave
                     string zoneId;
                     if (!automaticPolicy.Observe(identity.Key, currentBounds, restoredBounds, expanded, false,
                         area, layout.Zones, out zoneId, out region)) { Disable(existing); continue; }
-                    // The component did not load (refused, elevated, timed out): fit the maximized window from outside instead.
-                    if (existing == null && failed.Contains(identity.Key)) { FitMaximized(identity, region); continue; }
+                    // No component (refused, elevated, timed out, or a Chromium window): fit the maximized window from outside instead.
+                    if (existing == null && OutsideFitOnly(identity)) { FitFromOutside(identity, region); continue; }
                     if (existing != null) AttachCore(identity, region, false, true, layoutRegions, zoneId);
                     else if (!failed.Contains(identity.Key) && DateTime.UtcNow >= nextAutomaticLaunch)
                     {
@@ -679,7 +713,8 @@ namespace DisplayWeave
                 if (fit != null && fit.Attempts != 0) { fit.Attempts = 0; failureHistory.ClearTarget(target); }
                 return;
             }
-            if (fit == null) maximized.Add(handle, fit = new MaximizedFit { Target = target, Reason = failureHistory.For(target) });
+            if (fit == null) maximized.Add(handle, fit = new MaximizedFit { Target = target,
+                Reason = OutsideOnlyReason(target.WindowClass) ?? failureHistory.For(target) });
             fit.Region = region;
             if (fit.Attempts >= MaximumFitAttempts || DateTime.UtcNow - fit.LastAttempt < FitRetryDelay) return;
             fit.LastAttempt = DateTime.UtcNow;
@@ -688,7 +723,7 @@ namespace DisplayWeave
                 RecordFailure(target, Path.GetFileName(target.ExecutablePath) + " keeps changing its maximized size, so DisplayWeave stopped fitting it. Restore and maximize it again to retry.");
                 return;
             }
-            if (!SetWindowPos(handle, IntPtr.Zero, wanted.X, wanted.Y, wanted.Width, wanted.Height, SwpNoZOrder | SwpNoActivate | SwpNoOwnerZOrder | SwpAsyncWindowPos))
+            if (!SetWindowPos(handle, IntPtr.Zero, wanted.X, wanted.Y, wanted.Width, wanted.Height, FitFlags))
             {
                 fit.Attempts = MaximumFitAttempts;
                 RecordFailure(target, "Windows did not move " + Path.GetFileName(target.ExecutablePath) + " (Windows error " +
@@ -696,6 +731,26 @@ namespace DisplayWeave
                 return;
             }
             LastMessage = "Fitted the maximized " + Path.GetFileName(target.ExecutablePath) + " window into its region. Nothing is loaded into the app.";
+        }
+
+        private void FitFromOutside(ApplicationIdentity target, Rectangle region)
+        {
+            FitMaximized(target, region);
+            readyApps.Add(new HandledApp { Target = target, Region = region, State = HandledAppState.Ready,
+                Error = OutsideOnlyReason(target.WindowClass) ?? String.Empty });
+        }
+
+        private bool OutsideFitOnly(ApplicationIdentity target)
+        {
+            return failed.Contains(target.Key) || OutsideOnlyReason(target.WindowClass) != null;
+        }
+
+        // Why a window class only ever gets the outside maximize fit; null when its component may be used.
+        internal static string OutsideOnlyReason(string windowClass)
+        {
+            if (ChromiumWindowProtection.IsChromiumWindow(windowClass)) return ChromiumWindowProtection.Message;
+            if (ShellProcessProtection.IsFolderWindow(windowClass)) return ShellProcessProtection.FolderMessage;
+            return null;
         }
 
         // A fitted window stays in its region under a MaximizeInRegion rule, or under
@@ -722,7 +777,7 @@ namespace DisplayWeave
                         bool resolved = TryResolveRegion(rule, layout, out region);
                         RegionControlMode mode = AutomaticRegionPolicy.Decide(layout.AutomaticRegions, false, released.Contains(current.ProcessKey),
                             rule == null ? (ApplicationAction?)null : rule.Action, resolved);
-                        if (KeepsMaximizedFit(mode, failed.Contains(current.Key))) continue;
+                        if (KeepsMaximizedFit(mode, OutsideFitOnly(current))) continue;
                         ReturnToMonitor(fit.Target.Handle);
                     }
                 }
@@ -748,7 +803,7 @@ namespace DisplayWeave
             DisplayMonitor monitor = DisplayMonitor.FromWindow(handle);
             if (monitor == null || IsIconic(handle) || !IsZoomed(handle) ||
                 !TryMaximizedBounds(handle, monitor.WorkingArea, out current, out wanted) || current == wanted) return;
-            SetWindowPos(handle, IntPtr.Zero, wanted.X, wanted.Y, wanted.Width, wanted.Height, SwpNoZOrder | SwpNoActivate | SwpNoOwnerZOrder | SwpAsyncWindowPos);
+            SetWindowPos(handle, IntPtr.Zero, wanted.X, wanted.Y, wanted.Width, wanted.Height, FitFlags);
         }
 
         private static bool TryMaximizedBounds(IntPtr handle, Rectangle target, out Rectangle current, out Rectangle wanted)
@@ -1313,7 +1368,9 @@ namespace DisplayWeave
         [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr handle, out NativeRect rectangle);
         [DllImport("user32.dll", SetLastError = true)] private static extern bool SetWindowPos(IntPtr handle, IntPtr after, int x, int y, int width, int height, uint flags);
         [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr handle, int attribute, out NativeRect value, int size);
-        private const uint SwpNoZOrder = 0x0004, SwpNoActivate = 0x0010, SwpNoOwnerZOrder = 0x0200, SwpAsyncWindowPos = 0x4000;
+        private const uint SwpNoZOrder = 0x0004, SwpNoActivate = 0x0010, SwpNoOwnerZOrder = 0x0200, SwpNoSendChanging = 0x0400, SwpAsyncWindowPos = 0x4000;
+        // Chromium-based apps reset any move of their maximized window in WM_WINDOWPOSCHANGING, so the outside fit skips that message.
+        private const uint FitFlags = SwpNoZOrder | SwpNoActivate | SwpNoOwnerZOrder | SwpNoSendChanging | SwpAsyncWindowPos;
         [DllImport("user32.dll")] private static extern bool GetWindowPlacement(IntPtr handle, ref WindowPlacement placement);
         [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] private static extern int GetWindowLong(IntPtr handle, int index);
         [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr(IntPtr handle, int index);

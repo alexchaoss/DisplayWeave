@@ -19,7 +19,7 @@ if (-not (Test-Path -LiteralPath $compiler)) { throw 'The Windows .NET Framework
 $setupSource = Join-Path $repository 'installer\setup'
 $output = Join-Path (Split-Path -Parent $PackagePath) "DisplayWeave-Setup-$version.exe"
 & $compiler /nologo /target:winexe /optimize+ /warn:4 /warnaserror+ /reference:System.Windows.Forms.dll /reference:System.Drawing.dll `
-    "/win32manifest:$setupSource\setup.manifest" "/resource:$PackagePath,$packageName" "/resource:$checksumPath,$packageName.sha256" `
+    "/win32manifest:$setupSource\setup.manifest" "/win32icon:$(Join-Path $repository 'src\DisplayWeave\app.ico')" "/resource:$PackagePath,$packageName" "/resource:$checksumPath,$packageName.sha256" `
     "/resource:$(Join-Path $repository 'installer\install.ps1'),install.ps1" "/out:$output" (Join-Path $setupSource 'Setup.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Setup build failed.' }
 $hash = (Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash.ToLowerInvariant()

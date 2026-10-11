@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace DisplayWeave
@@ -245,6 +246,69 @@ namespace DisplayWeave
                         }
                     }
                 });
+                test("Chromium windows are never hooked and keep the outside maximize fit", delegate
+                {
+                    foreach (string cls in new[] { "Chrome_WidgetWin_1", "Chrome_WidgetWin_0" })
+                    {
+                        // An impossible PID and fake HWND keep this test independent of user applications.
+                        ApplicationIdentity chromium = new ApplicationIdentity { ExecutablePath = @"C:\Apps\Browser.exe",
+                            WindowClass = cls, ProcessId = UInt32.MaxValue, CreationTime = 1, Handle = new IntPtr(1) };
+                        using (FullscreenController controller = new FullscreenController())
+                        {
+                            controller.AutomaticExecutableFilter = chromium.ExecutablePath;
+                            Assert(!controller.Attach(chromium, new Rectangle(100, 100, 800, 600), true), "Explicit Force hooked a Chromium window: " + cls);
+                            Assert(!controller.Attach(chromium, new Rectangle(100, 100, 800, 600), false), "A saved rule hooked a Chromium window: " + cls);
+                            Assert(controller.LastMessage == ChromiumWindowProtection.Message, "The Chromium refusal lost its explanation.");
+                            Assert(controller.Count == 0 && controller.PendingCount == 0 && controller.FailureCount == 0,
+                                "A Chromium window started a helper or recorded a failure.");
+                        }
+                    }
+                    foreach (string cls in new[] { "Chrome_RenderWidgetHostHWND", "MyChrome_WidgetWin_1", "chrome_widgetwin_1", "", null })
+                        Assert(!ChromiumWindowProtection.IsChromiumWindow(cls), "A non-Chromium class was excluded: " + cls);
+                    Assert(FullscreenController.KeepsMaximizedFit(RegionControlMode.Automatic, true) &&
+                        FullscreenController.KeepsMaximizedFit(RegionControlMode.Force, true), "Automatic or Force handling dropped the outside fit.");
+                    // A Chromium window with a Force rule is listed as Ready in its region before it is maximized.
+                    using (System.Windows.Forms.Form window = new System.Windows.Forms.Form())
+                    {
+                        DisplayMonitor primary = DisplayMonitor.FromRectangle(new Rectangle(0, 0, 1, 1));
+                        LayoutSettings layout = new LayoutSettings { MonitorDevice = primary.DeviceName };
+                        ApplicationIdentity browser = new ApplicationIdentity { ExecutablePath = @"C:\Apps\Browser.exe", WindowClass = "Chrome_WidgetWin_1",
+                            ProcessId = (uint)System.Diagnostics.Process.GetCurrentProcess().Id, CreationTime = 1, Handle = window.Handle };
+                        ApplicationRules rules = new ApplicationRules();
+                        rules.Rules.Add(new ApplicationRule { ExecutablePath = browser.ExecutablePath, WindowClass = browser.WindowClass, DisplayName = "Browser",
+                            Action = ApplicationAction.ForceFullscreen, MonitorDevice = primary.DeviceName, ZoneId = layout.Zones[1].Id });
+                        using (FullscreenController controller = new FullscreenController())
+                        {
+                            controller.Tick(new[] { new WindowCandidate { Handle = window.Handle, Title = "Browser", Identity = browser } }, rules, layout);
+                            List<HandledApp> apps = controller.HandledApps();
+                            Rectangle area = layout.UseWorkArea ? primary.WorkingArea : primary.Bounds;
+                            Assert(apps.Count == 1 && apps[0].State == HandledAppState.Ready && apps[0].Region == layout.Zones[1].ToPixels(area) &&
+                                apps[0].Error == ChromiumWindowProtection.Message, "A Chromium window with a rule was not listed as Ready in its region.");
+                            Assert(controller.Count == 0 && controller.PendingCount == 0 && controller.OutsideFitCount == 1,
+                                "A Chromium window with a rule started a helper or was not counted as handled.");
+                        }
+                    }
+                });
+                test("A maximized window that refuses moves, as Chromium does, is still fitted into its region", delegate
+                {
+                    using (RefusingWindow window = new RefusingWindow())
+                    {
+                        DisplayMonitor primary = DisplayMonitor.FromRectangle(new Rectangle(0, 0, 1, 1));
+                        LayoutSettings layout = new LayoutSettings { MonitorDevice = primary.DeviceName };
+                        ApplicationIdentity editor = new ApplicationIdentity { ExecutablePath = @"C:\Apps\Editor.exe", WindowClass = "EditorWindow",
+                            ProcessId = (uint)System.Diagnostics.Process.GetCurrentProcess().Id, CreationTime = 1, Handle = window.Handle };
+                        ApplicationRules rules = new ApplicationRules();
+                        rules.Rules.Add(new ApplicationRule { ExecutablePath = editor.ExecutablePath, WindowClass = editor.WindowClass, DisplayName = "Editor",
+                            Action = ApplicationAction.MaximizeInRegion, MonitorDevice = primary.DeviceName, ZoneId = layout.Zones[0].Id });
+                        Rectangle region = layout.Zones[0].ToPixels(layout.UseWorkArea ? primary.WorkingArea : primary.Bounds);
+                        Assert(window.Zoomed && window.VisibleFrame != region, "The test window did not start maximized over the whole display.");
+                        using (FullscreenController controller = new FullscreenController())
+                        {
+                            controller.Tick(new[] { new WindowCandidate { Handle = window.Handle, Title = "Editor", Identity = editor } }, rules, layout);
+                            Assert(window.VisibleFrame == region, "A maximized window that refuses moves was not fitted: " + window.VisibleFrame + " instead of " + region + ".");
+                        }
+                    }
+                });
                 test("Native launcher rejection remains distinct from an ordinary unsupported operation", delegate
                 {
                     ApplicationIdentity target = new ApplicationIdentity { ExecutablePath = @"C:\Apps\Battle.net.exe", ProcessId = 90 };
@@ -289,7 +353,7 @@ namespace DisplayWeave
                 {
                     // A deliberately nonexistent PID ensures this test never targets the real shell.
                     ApplicationIdentity shell = new ApplicationIdentity { ExecutablePath = @"C:\Windows\explorer.exe",
-                        WindowClass = "CabinetWClass", ProcessId = UInt32.MaxValue, CreationTime = 1, Handle = new IntPtr(1) };
+                        WindowClass = "Progman", ProcessId = UInt32.MaxValue, CreationTime = 1, Handle = new IntPtr(1) };
                     using (FullscreenController controller = new FullscreenController())
                     {
                         controller.AutomaticExecutableFilter = shell.ExecutablePath;
@@ -298,6 +362,58 @@ namespace DisplayWeave
                         Assert(!controller.Attach(shell, new Rectangle(100, 100, 800, 600), false), "Saved-rule attachment bypassed shell protection.");
                         Assert(controller.Count == 0 && controller.PendingCount == 0 && controller.FailureCount == 0,
                             "Shell rejection launched a helper or left a misleading app failure.");
+                    }
+                });
+                test("A maximize is reported once per change, not for the fit's own move", delegate
+                {
+                    using (MaximizeWatcher watcher = new MaximizeWatcher(delegate { }))
+                    {
+                        IntPtr first = new IntPtr(11), second = new IntPtr(12);
+                        Assert(watcher.BecameMaximized(first, true), "A maximize was not reported.");
+                        Assert(!watcher.BecameMaximized(first, true), "Moving a maximized window, as the fit does, was reported as a new maximize.");
+                        Assert(!watcher.BecameMaximized(first, false) && watcher.BecameMaximized(first, true), "A restore and second maximize was missed.");
+                        Assert(watcher.BecameMaximized(second, true), "Another window's maximize was missed.");
+                    }
+                });
+                test("Folder windows are never hooked and are fitted from outside when maximized", delegate
+                {
+                    foreach (string cls in new[] { "CabinetWClass", "exploreWClass" })
+                    {
+                        Assert(ShellProcessProtection.IsFolderWindow(cls) && ShellProcessProtection.IsExcludedWindowClass(cls),
+                            "A folder window class lost its outside-only handling or its hook exclusion: " + cls);
+                        // A deliberately nonexistent PID ensures this test never targets the real shell.
+                        ApplicationIdentity folder = new ApplicationIdentity { ExecutablePath = @"C:\Windows\explorer.exe",
+                            WindowClass = cls, ProcessId = UInt32.MaxValue, CreationTime = 1, Handle = new IntPtr(1) };
+                        using (FullscreenController controller = new FullscreenController())
+                        {
+                            Assert(!controller.Attach(folder, new Rectangle(100, 100, 800, 600), true) &&
+                                controller.LastMessage == ShellProcessProtection.FolderMessage, "Explicit Force hooked a folder window or lost the explanation.");
+                            Assert(!controller.Attach(folder, new Rectangle(100, 100, 800, 600), false), "A saved rule hooked a folder window.");
+                            Assert(controller.Count == 0 && controller.PendingCount == 0 && controller.FailureCount == 0,
+                                "A folder window started a helper or recorded a failure.");
+                        }
+                    }
+                    foreach (string cls in new[] { "Progman", "WorkerW", "Shell_TrayWnd", "SHELLDLL_DefView", "", null })
+                        Assert(!ShellProcessProtection.IsFolderWindow(cls), "The desktop or taskbar was treated as a folder window: " + cls);
+                    // A maximized folder window with an automatic region is fitted into it.
+                    using (RefusingWindow window = new RefusingWindow())
+                    {
+                        DisplayMonitor primary = DisplayMonitor.FromRectangle(new Rectangle(0, 0, 1, 1));
+                        LayoutSettings layout = new LayoutSettings { MonitorDevice = primary.DeviceName };
+                        ApplicationIdentity folder = new ApplicationIdentity { ExecutablePath = @"C:\Windows\explorer.exe", WindowClass = "CabinetWClass",
+                            ProcessId = (uint)System.Diagnostics.Process.GetCurrentProcess().Id, CreationTime = 1, Handle = window.Handle };
+                        ApplicationRules rules = new ApplicationRules();
+                        rules.Rules.Add(new ApplicationRule { ExecutablePath = folder.ExecutablePath, WindowClass = folder.WindowClass, DisplayName = "Folder",
+                            Action = ApplicationAction.ForceFullscreen, MonitorDevice = primary.DeviceName, ZoneId = layout.Zones[1].Id });
+                        Rectangle region = layout.Zones[1].ToPixels(layout.UseWorkArea ? primary.WorkingArea : primary.Bounds);
+                        using (FullscreenController controller = new FullscreenController())
+                        {
+                            controller.Tick(new[] { new WindowCandidate { Handle = window.Handle, Title = "Folder", Identity = folder } }, rules, layout);
+                            List<HandledApp> apps = controller.HandledApps();
+                            Assert(window.VisibleFrame == region, "A maximized folder window was not fitted: " + window.VisibleFrame + " instead of " + region + ".");
+                            Assert(apps.Count == 1 && apps[0].State == HandledAppState.FittedFromOutside && apps[0].Error == ShellProcessProtection.FolderMessage &&
+                                controller.Count == 0 && controller.PendingCount == 0, "A fitted folder window was hooked or not listed with its reason.");
+                        }
                     }
                 });
                 test("Incompatible hook failures identify the app and require restart rather than Force retry", delegate
@@ -665,6 +781,42 @@ namespace DisplayWeave
         private static void Assert(bool condition, string message)
         {
             if (!condition) throw new InvalidOperationException(message);
+        }
+
+        // Hidden and maximized; like Chromium, it refuses every move or resize in WM_WINDOWPOSCHANGING while maximized.
+        private sealed class RefusingWindow : System.Windows.Forms.Form
+        {
+            [DllImport("user32.dll")] private static extern bool IsZoomed(IntPtr handle);
+            [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr handle, out NativeRect rect);
+            [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr handle, int attribute, out NativeRect rect, int size);
+            private struct NativeRect { public int Left, Top, Right, Bottom; }
+
+            internal bool Zoomed { get { return IsZoomed(Handle); } }
+
+            internal Rectangle VisibleFrame
+            {
+                get
+                {
+                    NativeRect rect;
+                    if (DwmGetWindowAttribute(Handle, 9, out rect, 16) != 0) GetWindowRect(Handle, out rect); // DWMWA_EXTENDED_FRAME_BOUNDS
+                    return Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
+                }
+            }
+
+            protected override System.Windows.Forms.CreateParams CreateParams
+            {
+                get { System.Windows.Forms.CreateParams parameters = base.CreateParams; parameters.Style |= 0x01000000; return parameters; } // WS_MAXIMIZE
+            }
+
+            protected override void WndProc(ref System.Windows.Forms.Message m)
+            {
+                if (m.Msg == 0x0046 && IsZoomed(m.HWnd)) // WM_WINDOWPOSCHANGING
+                {
+                    int flags = 2 * IntPtr.Size + 16; // WINDOWPOS.flags
+                    Marshal.WriteInt32(m.LParam, flags, Marshal.ReadInt32(m.LParam, flags) | 0x0003); // SWP_NOSIZE | SWP_NOMOVE
+                }
+                base.WndProc(ref m);
+            }
         }
     }
 }

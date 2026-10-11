@@ -12,7 +12,7 @@ Read the relevant source before changing it. Start with `git status --short`, `g
 ## Product constraints
 
 - Constrain application fullscreen to customizable regions of an ultrawide. Regions must not overlap; the existing editor uses movable ruler pins and configurable pixel spacing.
-- Keep the physical desktop and taskbar at their normal dimensions. Exclude shell windows and processes, including Explorer; never implement regions by shrinking the global work area.
+- Keep the physical desktop and taskbar at their normal dimensions. Never hook shell windows or processes, including Explorer; File Explorer folder windows only get the outside maximize fit (user decision, 2026-10-11). Never implement regions by shrinking the global work area.
 - The planned non-injecting approach (fullscreen on a real virtual output, projected into a physical region) lives on the `prototype` branch, with its own report and architecture notes.
 - Preserve the user's app and its original placement. Never close a game, overwrite another display manager's configuration, remove a pre-existing driver, or unload another program's hooks as routine cleanup.
 - Do not bypass game protections or Windows driver-signature enforcement. Prior success with another tool is not evidence of equivalent behavior or terms-of-service approval.

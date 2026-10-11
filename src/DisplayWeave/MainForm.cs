@@ -39,6 +39,8 @@ namespace DisplayWeave
         private readonly RulerCanvas canvas = new RulerCanvas();
         private RulerLayout rulerLayout;
         private readonly Timer timer = new Timer();
+        private MaximizeWatcher maximizeWatcher;
+        private bool ticking;
         private readonly Timer updateTimer = new Timer();
         private readonly string installRoot = Updater.InstallRoot(Application.ExecutablePath);
         private DateTime nextUpdateCheck = DateTime.UtcNow;
@@ -66,7 +68,8 @@ namespace DisplayWeave
             fullscreen = service.Engine;
             if (service.LoadWarning.Length > 0) notice = service.LoadWarning;
             service.Saved += delegate { layoutDirty = false; SetLayoutState("Layout and app rules saved", false); };
-            Text = "DisplayWeave — virtual monitor preview";
+            Text = "DisplayWeave " + Program.Version;
+            Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             if (!String.IsNullOrWhiteSpace(automaticExecutableFilter)) Text = "DisplayWeave — interface test";
             Font = new Font("Segoe UI", 10F);
             BackColor = Color.FromArgb(246, 248, 252);
@@ -86,15 +89,10 @@ namespace DisplayWeave
             InitializeTray();
             if (!layoutDirty) SetLayoutState("Saved layout loaded · " + settings.Zones.Count + " regions · " + settings.GridStepPixels + " px grid", false);
             timer.Interval = 250;
-            timer.Tick += delegate
-            {
-                // The engine isolates each app's errors; one that still escapes affects every app, so handling
-                // pauses. It must not end DisplayWeave or raise a dialog every tick.
-                try { service.Tick(); }
-                catch (Exception ex) { ReportInternalError(ex, true); }
-                UpdateStatus();
-            };
+            timer.Tick += delegate { TickNow(); };
             timer.Start();
+            // A window fitted from outside first fills the display; fit it as soon as it maximizes, not on the next tick.
+            maximizeWatcher = new MaximizeWatcher(TickNow);
             // Administrator mode never updates: the setup and gh would run elevated from user-writable folders.
             if (installRoot != null && String.IsNullOrWhiteSpace(automaticExecutableFilter) && !ElevationRestart.IsElevated())
             {
@@ -457,11 +455,27 @@ namespace DisplayWeave
             trayMenu.Items.Add(trayUpdate);
             trayMenu.Items.Add(new ToolStripSeparator());
             trayMenu.Items.Add("Exit DisplayWeave", null, delegate { ExitApplication(); });
-            trayIcon.Icon = SystemIcons.Application;
-            trayIcon.Text = "DisplayWeave — automatic fullscreen regions";
+            trayIcon.Icon = Icon;
+            trayIcon.Text = "DisplayWeave " + Program.Version;
             trayIcon.ContextMenuStrip = trayMenu;
             trayIcon.MouseDoubleClick += delegate(object sender, MouseEventArgs e) { if (e.Button == MouseButtons.Left) ShowSettingsWindow(); };
             trayIcon.Visible = true;
+        }
+
+        private void TickNow()
+        {
+            // A maximize event can arrive while a tick waits on Windows; the running tick already covers it.
+            if (ticking) return;
+            ticking = true;
+            try
+            {
+                // The engine isolates each app's errors; one that still escapes affects every app, so handling
+                // pauses. It must not end DisplayWeave or raise a dialog every tick.
+                try { service.Tick(); }
+                catch (Exception ex) { ReportInternalError(ex, true); }
+                UpdateStatus();
+            }
+            finally { ticking = false; }
         }
 
         private void HandleFormClosing(object sender, FormClosingEventArgs e)
@@ -487,6 +501,7 @@ namespace DisplayWeave
                 MessageBox.Show(this, notice + "\n\nYour edits are still open. Save successfully before exiting.", "Layout not saved", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
+            maximizeWatcher.Dispose();
             timer.Stop();
             service.Dispose();
             trayIcon.Visible = false;
@@ -563,7 +578,7 @@ namespace DisplayWeave
             if (String.IsNullOrEmpty(failure)) failure = fullscreen.LastFailure;
             bool hasFailure = !String.IsNullOrEmpty(failure);
             engineState.Text = (fullscreen.Paused ? "Paused" : layoutProblem ? "Layout needs attention" : hasFailure ? "App needs attention" : "Handling active") +
-                "\n" + fullscreen.Count + " ready · " + fullscreen.PendingCount + " attaching";
+                "\n" + (fullscreen.Count + fullscreen.OutsideFitCount) + " handled · " + fullscreen.PendingCount + " attaching";
             engineState.ForeColor = fullscreen.Paused || hasFailure ? Color.FromArgb(150, 80, 14) : Color.FromArgb(31, 112, 73);
             pauseHandling.Text = fullscreen.Paused ? "Resume handling" : "Pause handling";
             string feedback = hasFailure ? failure : notice;
@@ -589,14 +604,15 @@ namespace DisplayWeave
             }
         }
 
-        private static readonly string[] HandledStateNames = { "Starting", "Working", "Not active", "Fitted from outside", "Error" };
+        private static readonly string[] HandledStateNames = { "Starting", "Working", "Not active", "Fitted from outside", "Error", "Ready" };
         private static readonly string[] HandledStateHelp =
         {
             "DisplayWeave is starting its component in this app. This normally takes a few seconds.",
             "DisplayWeave's component runs in this app: maximize and fullscreen stay inside its region.",
             "DisplayWeave's component is loaded but not confining this app right now: handling is paused, the window is on another display, or its rule changed.",
             "Nothing is loaded into this app. When you maximize it from its title bar, DisplayWeave fits the window into its region from outside. Exclusive fullscreen is not confined.",
-            ""
+            "",
+            "Nothing is loaded into this app. Maximize it from its title bar and DisplayWeave fits the window into this region from outside. Its own fullscreen mode still fills the monitor."
         };
 
         // Rebuilt only when a row changes, so the selection survives the 250 ms refresh.
@@ -615,8 +631,10 @@ namespace DisplayWeave
                 DisplayMonitor monitor = app.Region.IsEmpty ? DisplayMonitor.FromWindow(app.Target.Handle) : DisplayMonitor.FromRectangle(app.Region);
                 var row = new ListViewItem(new[] { Path.GetFileName(app.Target.ExecutablePath), monitor == null ? "—" : monitor.DeviceName.Replace(@"\\.\", ""),
                     RegionName(app.Region), HandledStateNames[(int)app.State] }) { Name = app.Target.Key, Tag = HandledDetails(app), UseItemStyleForSubItems = false };
-                row.SubItems[3].ForeColor = app.State == HandledAppState.Error ? Color.FromArgb(178, 54, 32) : app.Error.Length > 0 ? Color.FromArgb(150, 80, 14)
-                    : app.State == HandledAppState.Working || app.State == HandledAppState.FittedFromOutside ? Color.FromArgb(31, 112, 73) : Color.FromArgb(75, 89, 110);
+                row.SubItems[3].ForeColor = app.State == HandledAppState.Error ? Color.FromArgb(178, 54, 32) : app.State == HandledAppState.Ready ? Color.FromArgb(31, 112, 73)
+                    : app.Error.Length > 0 ? Color.FromArgb(150, 80, 14)
+                    : app.State == HandledAppState.Working || app.State == HandledAppState.FittedFromOutside || app.State == HandledAppState.Ready
+                        ? Color.FromArgb(31, 112, 73) : Color.FromArgb(75, 89, 110);
                 foreach (ListViewItem.ListViewSubItem cell in row.SubItems) signature.Append(cell.Text).Append('\t');
                 signature.Append(row.Name).Append('\t').Append(row.Tag).Append('\n');
                 rows.Add(row);
@@ -647,7 +665,7 @@ namespace DisplayWeave
         {
             string text = app.State == HandledAppState.Error ? "Error: " + app.Error : HandledStateNames[(int)app.State] + ": " + HandledStateHelp[(int)app.State];
             if (app.State != HandledAppState.Error && app.Error.Length > 0)
-                text += "\r\n\r\n" + (app.State == HandledAppState.FittedFromOutside ? "Why its component is not used: " : "Problem: ") + app.Error;
+                text += "\r\n\r\n" + (app.State == HandledAppState.FittedFromOutside || app.State == HandledAppState.Ready ? "Why its component is not used: " : "Problem: ") + app.Error;
             return text + "\r\n\r\n" + app.Target.ExecutablePath + " (PID " + app.Target.ProcessId + ")";
         }
 
@@ -701,7 +719,11 @@ namespace DisplayWeave
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { trayIcon.Visible = false; trayIcon.Dispose(); trayMenu.Dispose(); hints.Dispose(); timer.Dispose(); updateTimer.Dispose(); service.Dispose(); }
+            if (disposing)
+            {
+                if (maximizeWatcher != null) maximizeWatcher.Dispose();
+                trayIcon.Visible = false; trayIcon.Dispose(); trayMenu.Dispose(); hints.Dispose(); timer.Dispose(); updateTimer.Dispose(); service.Dispose();
+            }
             base.Dispose(disposing);
         }
 

@@ -12,7 +12,7 @@ Start with [AGENTS.md](../AGENTS.md) and the [dated handoff](agent-handoff.md). 
 | `scripts` | `fetch-tools`, `build`, `build-native`, `package`, `build-setup`, `release`. |
 | `installer` | `install.ps1`, shipped at the root of the package, and the setup program in `installer/setup`. |
 | `tests` | Installer regression checks and all live fixtures (`test-*.ps1`). |
-| `third_party`, `docs` | Vendored MinHook; documentation. |
+| `third_party`, `docs` | Vendored MinHook 1.3.4 (sources, headers and license only); documentation. |
 
 Scripts locate the repository from their parent folder, so run them from anywhere. `dist`, `release`, `.tools` and `test-results` are ignored local outputs.
 
@@ -72,7 +72,7 @@ They are not required for documentation changes. Keep the user informed when a r
 
 | Script | Effects |
 | --- | --- |
-| `test-monitor.ps1`, `test-handoff.ps1`, `test-loader-failure.ps1`, `test-compatibility.ps1`, `test-native.ps1` | Interactive/native-delivery fixtures. They attach only to the test processes they start; inspect their parameters and isolation guards first. |
+| `test-monitor.ps1`, `test-loader-failure.ps1`, `test-compatibility.ps1`, `test-native.ps1` | Interactive/native-delivery fixtures. They attach only to the test processes they start; inspect their parameters and isolation guards first. |
 
 ## Packaging and repository updates
 
