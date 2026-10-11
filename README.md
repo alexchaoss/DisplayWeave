@@ -5,41 +5,9 @@ screen regions, and optional per-application rules.
 
 For development or AI-agent continuation, start with [AGENTS.md](AGENTS.md), the
 [current handoff](docs/agent-handoff.md), and the [development runbook](docs/development.md).
-They distinguish the installed app, tested prototype tools, and unfinished work.
-
-## Try the virtual-display prototype with your own app
-
-**DisplayWeave Prototype 0.1.0-preview** is a separate, experimental app for the
-next approach: your chosen window runs on a temporary virtual display that is shown
-inside a region of your screen, with optional keyboard/mouse control and no code
-injected into the app. It installs next to, not over, this app. See the
-[prototype guide](docs/prototype-guide.md) for install steps, use and limits; it is
-published as the `prototype-v0.1.0-preview` release.
-
-The next backend uses Windows virtual displays and GPU projection. Its isolated
-[feasibility prototype](docs/projection-prototype.md) tools are not included in the
-installed 0.5.x preview or its updater. The source now
-includes GPU cursor rendering and explicit modal input: the source keeps real
-keyboard/mouse focus, and Ctrl+Alt+F10 releases interaction with a cleanup
-guardian watching for a presenter crash or stall. The x86 automated prototype
-sequence passed: an owned test app reported exclusive fullscreen on a temporary
-virtual output, GPU projection verified its colors, and tagged synthetic keyboard
-and relative mouse events reached the source. Registered-shortcut release restored
-focus, cursor and clip; the temporary output was removed and the original physical
-topology verified. An x64 watchdog test also passed recovery from a 3.5-second
-presenter stall, including display cleanup. Automatic focus return can still be
-denied by Windows, as a separate deadline-release test demonstrated.
-Physical hardware input, live separate-cursor delivery, crash recovery and game
-compatibility remain unverified.
-The installed legacy app was stopped for the recorded tests, and the new backend is
-not integrated into its UI.
-
-Cleanup now uses a bounded two-phase release. It permits a narrowly checked
-temporary physical path-refresh change while the source leaves fullscreen, then
-requires the original physical topology after removing the temporary display.
-This is a final-state restoration check, not a claim that every display field
-stays unchanged throughout startup and release. See the [prototype report](docs/projection-prototype.md)
-for the separate build, commands, current checks and remaining integration gates.
+They distinguish the installed app and unfinished work. The experimental virtual-display
+prototype, which runs your app on a temporary virtual display without loading anything
+into it, is on the [`prototype` branch](https://github.com/alexchaoss/DisplayWeave/tree/prototype).
 
 ## Install or update
 
@@ -393,24 +361,14 @@ The C# build uses Windows' .NET Framework compiler. Native integration tests ope
 temporary DirectX test windows and attach only to those test processes. The monitor fixture keeps its Direct3D swapchain windowed throughout. Legacy DXGI
 fixtures remain available for testing older resident components only.
 
-The legacy app is in `src/DisplayWeave`, its native code in `native/legacy`, the
-prototype in `src/DisplayWeave.Prototype` and `native/projection`; build scripts are
-in `scripts/`, installers in `installer/` and fixtures in `tests/` (see the
+The app is in `src/DisplayWeave`, its engine in `src/DisplayWeave.Core`, its native
+code in `native/legacy`; build scripts are in `scripts/`, installers in `installer/` and fixtures in `tests/` (see the
 [runbook](docs/development.md#repository-layout)). MinHook's license
 is preserved in `third_party/minhook/LICENSE.txt` and copied into the distribution.
 GitHub Actions is configured to build both architectures, run noninteractive checks,
 and upload the portable packages and test reports. The [handoff](docs/agent-handoff.md)
 records the latest observed CI blocker and local validation. `src/DisplayWeave/version.txt` and
-`release.json` define the legacy package version; the prototype has its own
-`src/DisplayWeave.Prototype/version.txt`.
-
-Prototype build, package and isolated installer checks:
-
-```powershell
-.\scripts\build-prototype.ps1 -RunSelfTests
-.\scripts\package-prototype.ps1
-.\tests\prototype-installer-tests.ps1
-```
+`release.json` define the package version.
 
 ## Use the engine without the UI
 
@@ -459,9 +417,7 @@ names the type adds `using ApplicationIdentity = DisplayWeave.ApplicationIdentit
 ## License
 
 DisplayWeave is released under the [MIT License](LICENSE). It includes MinHook,
-which has its own BSD 2-Clause license in `third_party/minhook/LICENSE.txt`. The
-prototype downloads the separately licensed Virtual Display Driver at install time
-(see `src/DisplayWeave.Prototype/THIRD-PARTY-NOTICES.txt`).
+which has its own BSD 2-Clause license in `third_party/minhook/LICENSE.txt`.
 
 ## References
 

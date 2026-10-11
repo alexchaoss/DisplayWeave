@@ -35,12 +35,6 @@ jobs:
       - name: Build x64 and x86 native components
         run: ./scripts/build-native.ps1 -Architecture all
 
-      - name: Build isolated projection tools and run policy checks
-        run: ./scripts/build-projection.ps1 -Architecture all -RunSelfTests
-
-      - name: Build the projection prototype app and run its checks
-        run: ./scripts/build-prototype.ps1 -RunSelfTests -ProjectionDirectory dist/projection-x64
-
       # These test modes do not open application windows, inject hooks, or change
       # the desktop. Monitor/window rendering tests require an interactive desktop.
       - name: Run managed and native policy tests
@@ -108,14 +102,6 @@ jobs:
           ./scripts/build-setup.ps1
           ./tests/setup-tests.ps1 -OutputDirectory test-results/ci
 
-      # Packages the prototype (no driver inside) and checks its installer with
-      # a temporary root; pinned-driver cases are skipped without local files.
-      - name: Package the projection prototype and run installer checks
-        timeout-minutes: 5
-        run: |
-          ./scripts/package-prototype.ps1
-          ./tests/prototype-installer-tests.ps1 -OutputDirectory test-results/ci
-
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v7
@@ -136,8 +122,6 @@ jobs:
             release/DisplayWeave-*.zip.sha256
             release/DisplayWeave-Setup-*.exe
             release/DisplayWeave-Setup-*.exe.sha256
-            release/DisplayWeavePrototype-*.zip
-            release/DisplayWeavePrototype-*.zip.sha256
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
