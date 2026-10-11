@@ -273,16 +273,6 @@ public:
         std::vector<BootstrapModule> modules;
         if (!BootstrapModules(pid, modules, error)) return error;
         BootstrapModule targetDll = {}; size_t hookCount = 0;
-        for (size_t i = 0; i < modules.size(); ++i) {
-            const wchar_t* baseName = wcsrchr(modules[i].path.c_str(), L'\\');
-            if (baseName && _wcsicmp(baseName + 1, L"RegionHook.dll") == 0) {
-                ++hookCount; targetDll = modules[i];
-            }
-        }
-        if (hookCount > 1 || (hookCount && !SameAbsolutePath(targetDll.path.c_str(), dllPath.c_str()))) {
-            reason = "The application's resident fullscreen DLL changed before loading; no second DLL was loaded";
-            return ERROR_REVISION_MISMATCH;
-        }
         {
             // Even if the callback raced us and loaded this exact DLL, take a
             // normal loader reference before invoking its export. Unhooking a
@@ -342,14 +332,13 @@ public:
                 reason = BootstrapDiagnostic(observed) + "; module enumeration failed";
                 return error;
             }
-            hookCount = 0;
-            for (size_t i = 0; i < modules.size(); ++i) {
-                const wchar_t* name = wcsrchr(modules[i].path.c_str(), L'\\');
-                if (name && _wcsicmp(name + 1, L"RegionHook.dll") == 0) { targetDll = modules[i]; ++hookCount; }
-            }
+            // Only this exact DLL counts: a RegionHook.dll from another folder is an earlier
+            // build's resident hook, which stays pass-through beside this one.
+            for (size_t i = 0; i < modules.size(); ++i)
+                if (SameAbsolutePath(modules[i].path.c_str(), dllPath.c_str())) { targetDll = modules[i]; ++hookCount; }
             observed.modulesInspected = true;
             observed.hookCount = hookCount;
-            observed.exactPath = hookCount == 1 && SameAbsolutePath(targetDll.path.c_str(), dllPath.c_str());
+            observed.exactPath = hookCount == 1;
             BootstrapOutcome outcome = BootstrapClassify(observed);
             if (outcome != BootstrapVerified) {
                 reason = BootstrapDiagnostic(observed);

@@ -40,7 +40,7 @@ namespace DisplayWeave
                 !TrySnapAxis(InteriorPixels(yEdges, area.Height), area.Height, GridStep, out horizontal))
             {
                 WasRepaired = true;
-                BuildPreset(0, false);
+                BuildPreset(0, 100, false);
                 return;
             }
             List<int> oldVertical = InteriorPixels(xEdges, area.Width);
@@ -151,18 +151,21 @@ namespace DisplayWeave
             return true;
         }
 
-        public void ApplyPreset(int kind)
+        // scalePercent is the display's Windows scaling, such as 125.
+        public void ApplyPreset(int kind, int scalePercent = 100)
         {
-            BuildPreset(kind, true);
+            BuildPreset(kind, scalePercent, true);
         }
 
-        private void BuildPreset(int kind, bool preserveUnchanged)
+        private void BuildPreset(int kind, int scalePercent, bool preserveUnchanged)
         {
-            List<double> xEdges, yEdges;
-            List<Zone> ignored;
-            LayoutGeometry.TryReadCartesian(LayoutSettings.Preset(kind), out xEdges, out yEdges, out ignored);
-            List<int> vertical = BestFittingAxis(InteriorPixels(xEdges, Area.Width), Area.Width);
-            List<int> horizontal = BestFittingAxis(InteriorPixels(yEdges, Area.Height), Area.Height);
+            List<int> desiredVertical, desiredHorizontal;
+            PresetPins(kind, Area.Width, Area.Height, scalePercent, out desiredVertical, out desiredHorizontal);
+            // Put the grid on every preset pin; the new spacing divides the old one, so other positions stay valid.
+            foreach (int pin in desiredVertical) settings.GridStepPixels = Gcd(GridStep, Math.Abs(pin));
+            foreach (int pin in desiredHorizontal) settings.GridStepPixels = Gcd(GridStep, Math.Abs(pin));
+            List<int> vertical = BestFittingAxis(desiredVertical, Area.Width);
+            List<int> horizontal = BestFittingAxis(desiredHorizontal, Area.Height);
             List<Zone> old = preserveUnchanged && settings.Zones != null ? new List<Zone>(settings.Zones) : new List<Zone>();
             Commit(vertical, horizontal, delegate(int column, int row)
             {
@@ -171,6 +174,51 @@ namespace DisplayWeave
                     if (zone != null && zone.ToPixels(Area) == bounds) return zone;
                 return null;
             });
+        }
+
+        // Equal splits stay exact when they land on whole logical pixels; other sizes round to 20 px that are
+        // also whole logical pixels. Wide center keeps a 16:9 center at full height (2560 x 1440 on 3440 x 1440,
+        // 3720 x 2100 on a 7680 x 2100 work area) unless that leaves sides under an eighth of the width.
+        private static void PresetPins(int kind, int width, int height, int scalePercent,
+            out List<int> vertical, out List<int> horizontal)
+        {
+            int unit = scalePercent > 0 ? scalePercent / Gcd(scalePercent, 100) : 1; // 5 at 125%, 3 at 150%
+            vertical = new List<int>();
+            horizontal = new List<int>();
+            int side;
+            switch (kind)
+            {
+                case 1:
+                    side = Snap(width / 3.0, unit);
+                    break;
+                case 2:
+                    side = Snap((width - height * 16.0 / 9) / 2, unit);
+                    if (side < width / 8 || width - 2 * side < width / 8) side = Snap(width / 4.0, unit);
+                    break;
+                case 3:
+                    vertical.Add(Snap(width / 2.0, unit));
+                    horizontal.Add(Snap(height / 2.0, unit));
+                    return;
+                default:
+                    vertical.Add(Snap(width / 2.0, unit));
+                    return;
+            }
+            vertical.Add(side);
+            vertical.Add(width - side);
+        }
+
+        private static int Snap(double ideal, int unit)
+        {
+            double exact = Math.Round(ideal);
+            if (Math.Abs(ideal - exact) < 1e-6 && exact % unit == 0) return (int)exact;
+            int step = unit / Gcd(unit, 20) * 20;
+            return (int)Math.Round(ideal / step, MidpointRounding.AwayFromZero) * step;
+        }
+
+        private static int Gcd(int a, int b)
+        {
+            while (b != 0) { int remainder = a % b; a = b; b = remainder; }
+            return a;
         }
 
         private List<int> BestFittingAxis(List<int> desired, int length)

@@ -156,6 +156,19 @@ namespace DisplayWeave
         }
     }
 
+    public enum HandledAppState { Starting, Working, NotActive, FittedFromOutside, Error }
+
+    // One app DisplayWeave handles or tried to handle, for status lists.
+    public sealed class HandledApp
+    {
+        public ApplicationIdentity Target;
+        public HandledAppState State;
+        // The region in screen pixels; empty when none was chosen.
+        public Rectangle Region;
+        // Why the app is not handled as asked (its component failed, its rule broke); empty otherwise.
+        public string Error = String.Empty;
+    }
+
     // UI-thread coordinator. All fullscreen interception occurs in the selected
     // process through the architecture-matched native helper, never a resize loop.
     // The one exception is for apps without a working component (a MaximizeInRegion rule, or
@@ -199,8 +212,17 @@ namespace DisplayWeave
             internal ApplicationIdentity Target;
             internal int Attempts;
             internal DateTime LastAttempt;
+            internal Rectangle Region;
+            // Why the component is not used, kept after a successful fit clears the failure.
+            internal string Reason;
         }
         private readonly Dictionary<IntPtr, MaximizedFit> maximized = new Dictionary<IntPtr, MaximizedFit>();
+        // Listed windows whose saved rule names a missing region or monitor, from the latest tick.
+        private readonly List<HandledApp> ruleProblems = new List<HandledApp>();
+        // Apps whose handling threw; left alone until their window closes, a Force or a resume.
+        private readonly HashSet<string> faulted = new HashSet<string>(StringComparer.Ordinal);
+        // Self-tests only: runs at the start of each window's handling, so a test can make one app fail.
+        internal Action<ApplicationIdentity> FaultForTests;
         private const int MaximumFitAttempts = 4;
         // A game can take a second to rebuild its swap chain before it handles the move.
         private static readonly TimeSpan FitRetryDelay = TimeSpan.FromSeconds(2);
@@ -209,6 +231,10 @@ namespace DisplayWeave
         public bool Paused { get; private set; }
         public string LastMessage { get; private set; }
         public string LastFailure { get { return failureHistory.Latest; } }
+        // Why the latest tick could not use the layout at all; empty when it could.
+        public string LayoutProblem { get; private set; }
+        // The full exception of the latest app whose handling threw, for a bug report; empty if none did.
+        public string LastInternalError { get; private set; }
         public string GetFailure(ApplicationIdentity target) { return failureHistory.For(target); }
         public int Count { get { int count = 0; foreach (Session s in sessions.Values) if (s.Enabled && s.Ready) count++; return count; } }
         public int PendingCount { get { int count = 0; foreach (Session s in sessions.Values) if (s.Enabled && !s.Ready) count++; return count; } }
@@ -220,7 +246,28 @@ namespace DisplayWeave
         // Test scope only: automatic preparation is limited to this exact executable path when set.
         public string AutomaticExecutableFilter { get; set; }
 
-        public FullscreenController() { LastMessage = String.Empty; }
+        public FullscreenController() { LastMessage = LayoutProblem = LastInternalError = String.Empty; }
+
+        // Apps with a helper, a maximized fit, a broken rule or a recorded failure. Call from the Tick thread.
+        public List<HandledApp> HandledApps()
+        {
+            Dictionary<string, HandledApp> apps = new Dictionary<string, HandledApp>(StringComparer.Ordinal);
+            foreach (Session s in sessions.Values)
+                apps[s.Target.Key] = new HandledApp { Target = s.Target, Region = s.Region,
+                    State = !s.Enabled ? HandledAppState.NotActive : s.Ready ? HandledAppState.Working : HandledAppState.Starting };
+            foreach (MaximizedFit fit in maximized.Values)
+                if (!apps.ContainsKey(fit.Target.Key))
+                    apps[fit.Target.Key] = new HandledApp { Target = fit.Target, Region = fit.Region, Error = fit.Reason ?? String.Empty,
+                        State = fit.Attempts >= MaximumFitAttempts ? HandledAppState.Error : HandledAppState.FittedFromOutside };
+            foreach (HandledApp problem in ruleProblems) apps[problem.Target.Key] = problem;
+            foreach (ApplicationIdentity target in failureHistory.Targets)
+            {
+                HandledApp app;
+                if (!apps.TryGetValue(target.Key, out app)) apps[target.Key] = app = new HandledApp { Target = target, State = HandledAppState.Error };
+                app.Error = failureHistory.For(target);
+            }
+            return new List<HandledApp>(apps.Values);
+        }
 
         public static bool TryInspect(IntPtr handle, out ApplicationIdentity identity, out string error)
         {
@@ -298,7 +345,7 @@ namespace DisplayWeave
                 LastMessage = "Test mode only permits its selected executable.";
                 return false;
             }
-            if (explicitRequest) { failed.Remove(target.Key); released.Remove(target.ProcessKey); }
+            if (explicitRequest) { failed.Remove(target.Key); faulted.Remove(target.Key); released.Remove(target.ProcessKey); }
             else if (Paused || failed.Contains(target.Key) || released.Contains(target.ProcessKey)) return false;
             string layoutKey;
             if (!TrySerializeRegions(regions ?? new Rectangle[] { region }, region, out layoutKey))
@@ -371,116 +418,139 @@ namespace DisplayWeave
         {
             if (disposed) return;
             PruneClosedFailures();
+            ruleProblems.Clear();
             List<Rectangle> layoutRegions;
             bool validLayout = TryResolveLayout(layout, out layoutRegions);
             string layoutKey = null;
             if (validLayout) validLayout = TrySerializeRegions(layoutRegions, layoutRegions[0], out layoutKey);
+            LayoutProblem = String.Empty;
+            if (!validLayout)
+            {
+                string device = layout == null ? String.Empty : layout.MonitorDevice;
+                List<string> displays = new List<string>();
+                foreach (DisplayMonitor monitor in DisplayMonitor.All()) displays.Add(monitor.DeviceName);
+                LayoutProblem = displays.Exists(delegate(string name) { return String.Equals(name, device, StringComparison.OrdinalIgnoreCase); })
+                    ? "No app is handled: the regions do not fit display " + device + ". Open Layout, review the regions, then Save layout."
+                    : "No app is handled: the layout's display " + device + " was not found; Windows reports " + String.Join(", ", displays) +
+                        ". Open Layout, choose a display, then Save layout. Another display or region tool can rename displays; exit it first.";
+            }
             List<uint> remove = new List<uint>();
             foreach (KeyValuePair<uint, Session> pair in sessions)
             {
                 Session session = pair.Value;
-                if (LauncherProcessProtection.IsExcludedExecutable(session.Target.ExecutablePath))
+                if (faulted.Contains(session.Target.Key)) { Stop(session); remove.Add(pair.Key); continue; }
+                try
                 {
-                    RejectLauncherTarget(session.Target);
-                    Stop(session);
-                    remove.Add(pair.Key);
-                    continue;
-                }
-                if (IsProtectedShellTarget(session.Target))
-                {
-                    RejectShellTarget(session.Target);
-                    Stop(session);
-                    remove.Add(pair.Key);
-                    continue;
-                }
-                if (!WithinExecutableScope(session.Target)) { Stop(session); remove.Add(pair.Key); continue; }
-                bool hostExited = HostExited(session);
-                bool outputComplete = !hostExited || WaitForExitedOutput(session);
-                string failure = null;
-                lock (session.Messages)
-                {
-                    while (session.Messages.Count > 0)
+                    if (LauncherProcessProtection.IsExcludedExecutable(session.Target.ExecutablePath))
                     {
-                        string message = session.Messages.Dequeue();
-                        if (message.StartsWith("READY", StringComparison.Ordinal))
-                        {
-                            bool reused;
-                            uint capabilities;
-                            if (!TryParseReady(message, session.Target.ProcessId, out reused, out capabilities))
-                            {
-                                failure = PreferFailure(failure, "Native helper sent an invalid readiness response or acknowledged another process.");
-                                continue;
-                            }
-                            session.Ready = true;
-                            failed.Remove(session.Target.Key);
-                            failureHistory.ClearTarget(session.Target);
-                            LastMessage = FormatReady(session.Target, session.Automatic, session.Enabled, reused, capabilities);
-                        }
-                        else if (message.StartsWith("STATE ", StringComparison.Ordinal))
-                        {
-                            if (message == "STATE NORMAL") session.NativeExpanded = false;
-                            else if (message == "STATE MAXIMIZED" || message == "STATE FULLSCREEN" || message == "STATE FORCED")
-                                session.NativeExpanded = true;
-                        }
-                        else if (message.StartsWith("ERROR", StringComparison.Ordinal)) failure = PreferFailure(failure, message);
-                        else if (message.Length != 0 && !message.StartsWith("OK ", StringComparison.Ordinal) && message != "STOPPED") LastMessage = message;
-                    }
-                }
-                uint currentPid;
-                if (!IsWindow(session.Target.Handle) || GetWindowThreadProcessId(session.Target.Handle, out currentPid) == 0 || currentPid != session.Target.ProcessId)
-                { Stop(session); remove.Add(pair.Key); continue; }
-                if (failure == null && hostExited && !outputComplete)
-                {
-                    // stdout callbacks can arrive after HasExited. Keep this session until
-                    // their bounded drain completes rather than replacing a useful native error.
-                    session.AwaitingExitOutput = true;
-                    continue;
-                }
-                session.AwaitingExitOutput = false;
-                if (failure == null && hostExited) failure = "Native helper exited before the application closed.";
-                if (failure == null && !session.Ready && (DateTime.UtcNow - session.Started).TotalSeconds > 15)
-                    failure = "Fullscreen integration did not acknowledge readiness before the startup deadline (Windows error 1460)";
-                if (failure != null)
-                {
-                    RecordFailure(session.Target, failure);
-                    Stop(session); remove.Add(pair.Key);
-                }
-                else if (!Paused)
-                {
-                    if (!validLayout) { Disable(session); continue; }
-                    // Hidden application windows do not appear in the eligible candidate list.
-                    // Preference/rule changes must still disarm their existing native hooks now.
-                    ApplicationRule currentRule = MatchingRule(rules, session.Target);
-                    Rectangle ignoredRegion;
-                    bool ruleResolved = TryResolveRegion(currentRule, layout, out ignoredRegion);
-                    RegionControlMode desired = AutomaticRegionPolicy.Decide(layout.AutomaticRegions, false,
-                        released.Contains(session.Target.ProcessKey), currentRule == null ? (ApplicationAction?)null : currentRule.Action,
-                        ruleResolved);
-                    if (desired == RegionControlMode.None || desired == RegionControlMode.Maximize ||
-                        (desired == RegionControlMode.Automatic && !AutomaticCandidate(session.Target)) ||
-                        (desired == RegionControlMode.Automatic) != session.Automatic)
-                    { Disable(session); continue; }
-                    Rectangle currentRegion = ignoredRegion;
-                    if (desired == RegionControlMode.Automatic)
-                    {
-                        int regionIndex = layout.Zones.FindIndex(delegate(Zone zone) { return zone.Id == session.AutomaticZoneId; });
-                        // A hidden/fullscreen window retains its region identity;
-                        // removed regions never silently select another cell.
-                        if (regionIndex < 0) { Disable(session); continue; }
-                        currentRegion = layoutRegions[regionIndex];
-                    }
-                    if (!UpdateSessionLayout(session, layoutKey))
-                    {
+                        RejectLauncherTarget(session.Target);
                         Stop(session);
                         remove.Add(pair.Key);
+                        continue;
                     }
-                    else if (session.Region != currentRegion)
+                    if (IsProtectedShellTarget(session.Target))
                     {
-                        // Hidden and minimized windows do not appear in the
-                        // candidate list, but still need current region bounds.
-                        if (Send(session, "UPDATE " + BoundsArguments(currentRegion))) session.Region = currentRegion;
-                        else { Stop(session); remove.Add(pair.Key); }
+                        RejectShellTarget(session.Target);
+                        Stop(session);
+                        remove.Add(pair.Key);
+                        continue;
                     }
+                    if (!WithinExecutableScope(session.Target)) { Stop(session); remove.Add(pair.Key); continue; }
+                    bool hostExited = HostExited(session);
+                    bool outputComplete = !hostExited || WaitForExitedOutput(session);
+                    string failure = null;
+                    lock (session.Messages)
+                    {
+                        while (session.Messages.Count > 0)
+                        {
+                            string message = session.Messages.Dequeue();
+                            if (message.StartsWith("READY", StringComparison.Ordinal))
+                            {
+                                bool reused;
+                                uint capabilities;
+                                if (!TryParseReady(message, session.Target.ProcessId, out reused, out capabilities))
+                                {
+                                    failure = PreferFailure(failure, "Native helper sent an invalid readiness response or acknowledged another process.");
+                                    continue;
+                                }
+                                session.Ready = true;
+                                failed.Remove(session.Target.Key);
+                                failureHistory.ClearTarget(session.Target);
+                                LastMessage = FormatReady(session.Target, session.Automatic, session.Enabled, reused, capabilities);
+                            }
+                            else if (message.StartsWith("STATE ", StringComparison.Ordinal))
+                            {
+                                if (message == "STATE NORMAL") session.NativeExpanded = false;
+                                else if (message == "STATE MAXIMIZED" || message == "STATE FULLSCREEN" || message == "STATE FORCED")
+                                    session.NativeExpanded = true;
+                            }
+                            else if (message.StartsWith("ERROR", StringComparison.Ordinal)) failure = PreferFailure(failure, message);
+                            else if (message.Length != 0 && !message.StartsWith("OK ", StringComparison.Ordinal) && message != "STOPPED") LastMessage = message;
+                        }
+                    }
+                    uint currentPid;
+                    if (!IsWindow(session.Target.Handle) || GetWindowThreadProcessId(session.Target.Handle, out currentPid) == 0 || currentPid != session.Target.ProcessId)
+                    { Stop(session); remove.Add(pair.Key); continue; }
+                    if (failure == null && hostExited && !outputComplete)
+                    {
+                        // stdout callbacks can arrive after HasExited. Keep this session until
+                        // their bounded drain completes rather than replacing a useful native error.
+                        session.AwaitingExitOutput = true;
+                        continue;
+                    }
+                    session.AwaitingExitOutput = false;
+                    if (failure == null && hostExited) failure = "Native helper exited before the application closed.";
+                    if (failure == null && !session.Ready && (DateTime.UtcNow - session.Started).TotalSeconds > 15)
+                        failure = "Fullscreen integration did not acknowledge readiness before the startup deadline (Windows error 1460)";
+                    if (failure != null)
+                    {
+                        RecordFailure(session.Target, failure);
+                        Stop(session); remove.Add(pair.Key);
+                    }
+                    else if (!Paused)
+                    {
+                        if (!validLayout) { Disable(session); continue; }
+                        // Hidden application windows do not appear in the eligible candidate list.
+                        // Preference/rule changes must still disarm their existing native hooks now.
+                        ApplicationRule currentRule = MatchingRule(rules, session.Target);
+                        Rectangle ignoredRegion;
+                        bool ruleResolved = TryResolveRegion(currentRule, layout, out ignoredRegion);
+                        RegionControlMode desired = AutomaticRegionPolicy.Decide(layout.AutomaticRegions, false,
+                            released.Contains(session.Target.ProcessKey), currentRule == null ? (ApplicationAction?)null : currentRule.Action,
+                            ruleResolved);
+                        if (desired == RegionControlMode.None || desired == RegionControlMode.Maximize ||
+                            (desired == RegionControlMode.Automatic && !AutomaticCandidate(session.Target)) ||
+                            (desired == RegionControlMode.Automatic) != session.Automatic)
+                        { Disable(session); continue; }
+                        Rectangle currentRegion = ignoredRegion;
+                        if (desired == RegionControlMode.Automatic)
+                        {
+                            int regionIndex = layout.Zones.FindIndex(delegate(Zone zone) { return zone.Id == session.AutomaticZoneId; });
+                            // A hidden/fullscreen window retains its region identity;
+                            // removed regions never silently select another cell.
+                            if (regionIndex < 0) { Disable(session); continue; }
+                            currentRegion = layoutRegions[regionIndex];
+                        }
+                        if (!UpdateSessionLayout(session, layoutKey))
+                        {
+                            Stop(session);
+                            remove.Add(pair.Key);
+                        }
+                        else if (session.Region != currentRegion)
+                        {
+                            // Hidden and minimized windows do not appear in the
+                            // candidate list, but still need current region bounds.
+                            if (Send(session, "UPDATE " + BoundsArguments(currentRegion))) session.Region = currentRegion;
+                            else { Stop(session); remove.Add(pair.Key); }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // An error with one app stops only that app's handling.
+                    Quarantine(session.Target, ex);
+                    Stop(session);
+                    remove.Add(pair.Key);
                 }
             }
             foreach (uint pid in remove) sessions.Remove(pid);
@@ -504,61 +574,70 @@ namespace DisplayWeave
                 ApplicationIdentity identity = window.Identity;
                 string error;
                 if (identity == null && !TryInspect(window.Handle, out identity, out error)) continue;
-                if (!WithinExecutableScope(identity)) continue;
-                observed.Add(identity.Key);
-                Session existing;
-                sessions.TryGetValue(identity.ProcessId, out existing);
-                if (existing != null && existing.AwaitingExitOutput) continue;
-                // Native hooks target one main window per process; never retarget a secondary window implicitly.
-                if (existing != null && existing.Target.Key != identity.Key) continue;
-                ApplicationRule rule = MatchingRule(rules, identity);
-                Rectangle region;
-                bool resolved = TryResolveRegion(rule, layout, out region);
-                RegionControlMode mode = AutomaticRegionPolicy.Decide(layout.AutomaticRegions, Paused,
-                    released.Contains(identity.ProcessKey), rule == null ? (ApplicationAction?)null : rule.Action, resolved);
-                if (mode == RegionControlMode.None)
+                if (!WithinExecutableScope(identity) || faulted.Contains(identity.Key)) continue;
+                try
                 {
-                    Disable(existing);
-                    continue;
+                    if (FaultForTests != null) FaultForTests(identity);
+                    observed.Add(identity.Key);
+                    Session existing;
+                    sessions.TryGetValue(identity.ProcessId, out existing);
+                    if (existing != null && existing.AwaitingExitOutput) continue;
+                    // Native hooks target one main window per process; never retarget a secondary window implicitly.
+                    if (existing != null && existing.Target.Key != identity.Key) continue;
+                    ApplicationRule rule = MatchingRule(rules, identity);
+                    Rectangle region;
+                    bool resolved = TryResolveRegion(rule, layout, out region);
+                    RegionControlMode mode = AutomaticRegionPolicy.Decide(layout.AutomaticRegions, Paused,
+                        released.Contains(identity.ProcessKey), rule == null ? (ApplicationAction?)null : rule.Action, resolved);
+                    if (mode == RegionControlMode.None)
+                    {
+                        if (rule != null && rule.Action != ApplicationAction.Ignore && !resolved && !released.Contains(identity.ProcessKey))
+                            ruleProblems.Add(new HandledApp { Target = identity, State = HandledAppState.Error, Error = Path.GetFileName(identity.ExecutablePath) +
+                                " (PID " + identity.ProcessId + "): its saved rule names a region or display that no longer exists, so DisplayWeave leaves it alone." +
+                                " On App rules, choose a region for it again or remove the rule." });
+                        Disable(existing);
+                        continue;
+                    }
+                    if (mode == RegionControlMode.Maximize)
+                    {
+                        Disable(existing);
+                        FitMaximized(identity, region);
+                        continue;
+                    }
+                    if (mode == RegionControlMode.Force)
+                    {
+                        if (existing == null && failed.Contains(identity.Key)) FitMaximized(identity, region);
+                        else AttachCore(identity, region, false, false, layoutRegions);
+                        continue;
+                    }
+                    if (selected == null || !AutomaticCandidate(identity)) { Disable(existing); continue; }
+                    Rectangle currentBounds, restoredBounds;
+                    bool expanded, minimized;
+                    if (!TryReadWindowState(identity.Handle, selected.Bounds, existing, out currentBounds,
+                        out restoredBounds, out expanded, out minimized)) continue;
+                    if (minimized) continue;
+                    // A window spanning monitors belongs to the monitor with the greatest window overlap.
+                    DisplayMonitor currentMonitor = DisplayMonitor.FromRectangle(currentBounds);
+                    if (currentMonitor == null || !String.Equals(currentMonitor.DeviceName, selected.DeviceName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        automaticPolicy.Forget(identity.Key);
+                        Disable(existing);
+                        continue;
+                    }
+                    string zoneId;
+                    if (!automaticPolicy.Observe(identity.Key, currentBounds, restoredBounds, expanded, false,
+                        area, layout.Zones, out zoneId, out region)) { Disable(existing); continue; }
+                    // The component did not load (refused, elevated, timed out): fit the maximized window from outside instead.
+                    if (existing == null && failed.Contains(identity.Key)) { FitMaximized(identity, region); continue; }
+                    if (existing != null) AttachCore(identity, region, false, true, layoutRegions, zoneId);
+                    else if (!failed.Contains(identity.Key) && DateTime.UtcNow >= nextAutomaticLaunch)
+                    {
+                        // Prepare gradually. Foreground applications are considered first on every tick.
+                        nextAutomaticLaunch = DateTime.UtcNow.AddMilliseconds(750);
+                        AttachCore(identity, region, false, true, layoutRegions, zoneId);
+                    }
                 }
-                if (mode == RegionControlMode.Maximize)
-                {
-                    Disable(existing);
-                    FitMaximized(identity, region);
-                    continue;
-                }
-                if (mode == RegionControlMode.Force)
-                {
-                    if (existing == null && failed.Contains(identity.Key)) FitMaximized(identity, region);
-                    else AttachCore(identity, region, false, false, layoutRegions);
-                    continue;
-                }
-                if (selected == null || !AutomaticCandidate(identity)) { Disable(existing); continue; }
-                Rectangle currentBounds, restoredBounds;
-                bool expanded, minimized;
-                if (!TryReadWindowState(identity.Handle, selected.Bounds, existing, out currentBounds,
-                    out restoredBounds, out expanded, out minimized)) continue;
-                if (minimized) continue;
-                // A window spanning monitors belongs to the monitor with the greatest window overlap.
-                DisplayMonitor currentMonitor = DisplayMonitor.FromRectangle(currentBounds);
-                if (currentMonitor == null || !String.Equals(currentMonitor.DeviceName, selected.DeviceName, StringComparison.OrdinalIgnoreCase))
-                {
-                    automaticPolicy.Forget(identity.Key);
-                    Disable(existing);
-                    continue;
-                }
-                string zoneId;
-                if (!automaticPolicy.Observe(identity.Key, currentBounds, restoredBounds, expanded, false,
-                    area, layout.Zones, out zoneId, out region)) { Disable(existing); continue; }
-                // The component did not load (refused, elevated, timed out): fit the maximized window from outside instead.
-                if (existing == null && failed.Contains(identity.Key)) { FitMaximized(identity, region); continue; }
-                if (existing != null) AttachCore(identity, region, false, true, layoutRegions, zoneId);
-                else if (!failed.Contains(identity.Key) && DateTime.UtcNow >= nextAutomaticLaunch)
-                {
-                    // Prepare gradually. Foreground applications are considered first on every tick.
-                    nextAutomaticLaunch = DateTime.UtcNow.AddMilliseconds(750);
-                    AttachCore(identity, region, false, true, layoutRegions, zoneId);
-                }
+                catch (Exception ex) { Quarantine(identity, ex); } // the other apps are still handled
             }
             // A fullscreen app may temporarily hide its HWND. Keep its original selection
             // until the session actually ends, instead of selecting from fullscreen bounds.
@@ -582,7 +661,17 @@ namespace DisplayWeave
             maximized.TryGetValue(handle, out fit);
             if (fit != null && fit.Target.Key != target.Key) { maximized.Remove(handle); fit = null; }
             // A restored window is back where Windows keeps its normal position; nothing to undo.
-            if (IsIconic(handle) || !IsZoomed(handle)) { if (fit != null && !IsIconic(handle)) maximized.Remove(handle); return; }
+            if (IsIconic(handle) || !IsZoomed(handle))
+            {
+                if (fit == null || IsIconic(handle)) return;
+                maximized.Remove(handle);
+                // Restoring is the retry for a failed fit: show the component's reason again, not the old fit failure.
+                if (fit.Attempts >= MaximumFitAttempts)
+                {
+                    if (String.IsNullOrEmpty(fit.Reason)) failureHistory.ClearTarget(target); else failureHistory.Record(target, fit.Reason);
+                }
+                return;
+            }
             Rectangle current, wanted;
             if (!TryMaximizedBounds(handle, region, out current, out wanted)) return;
             if (current == wanted)
@@ -590,7 +679,8 @@ namespace DisplayWeave
                 if (fit != null && fit.Attempts != 0) { fit.Attempts = 0; failureHistory.ClearTarget(target); }
                 return;
             }
-            if (fit == null) maximized.Add(handle, fit = new MaximizedFit { Target = target });
+            if (fit == null) maximized.Add(handle, fit = new MaximizedFit { Target = target, Reason = failureHistory.For(target) });
+            fit.Region = region;
             if (fit.Attempts >= MaximumFitAttempts || DateTime.UtcNow - fit.LastAttempt < FitRetryDelay) return;
             fit.LastAttempt = DateTime.UtcNow;
             if (++fit.Attempts == MaximumFitAttempts)
@@ -621,18 +711,22 @@ namespace DisplayWeave
         {
             foreach (MaximizedFit fit in new List<MaximizedFit>(maximized.Values))
             {
-                ApplicationIdentity current;
-                string error;
-                if (TryInspect(fit.Target.Handle, out current, out error) && current.Key == fit.Target.Key)
+                try
                 {
-                    ApplicationRule rule = MatchingRule(rules, current);
-                    Rectangle region;
-                    bool resolved = TryResolveRegion(rule, layout, out region);
-                    RegionControlMode mode = AutomaticRegionPolicy.Decide(layout.AutomaticRegions, false, released.Contains(current.ProcessKey),
-                        rule == null ? (ApplicationAction?)null : rule.Action, resolved);
-                    if (KeepsMaximizedFit(mode, failed.Contains(current.Key))) continue;
-                    ReturnToMonitor(fit.Target.Handle);
+                    ApplicationIdentity current;
+                    string error;
+                    if (TryInspect(fit.Target.Handle, out current, out error) && current.Key == fit.Target.Key)
+                    {
+                        ApplicationRule rule = MatchingRule(rules, current);
+                        Rectangle region;
+                        bool resolved = TryResolveRegion(rule, layout, out region);
+                        RegionControlMode mode = AutomaticRegionPolicy.Decide(layout.AutomaticRegions, false, released.Contains(current.ProcessKey),
+                            rule == null ? (ApplicationAction?)null : rule.Action, resolved);
+                        if (KeepsMaximizedFit(mode, failed.Contains(current.Key))) continue;
+                        ReturnToMonitor(fit.Target.Handle);
+                    }
                 }
+                catch (Exception ex) { Quarantine(fit.Target, ex); } // the other fitted windows are still checked
                 maximized.Remove(fit.Target.Handle);
             }
         }
@@ -898,6 +992,15 @@ namespace DisplayWeave
             LastMessage = message;
         }
 
+        // Leaves one app alone after its handling threw, so the bug cannot stop the others, and says why on its row.
+        private void Quarantine(ApplicationIdentity target, Exception error)
+        {
+            faulted.Add(target.Key);
+            LastInternalError = error.ToString();
+            RecordFailure(target, "DisplayWeave hit an internal error with this app and now leaves it alone (" +
+                error.GetType().Name + ": " + error.Message.TrimEnd('.', ' ') + ")");
+        }
+
         private void PruneClosedFailures()
         {
             foreach (ApplicationIdentity target in failureHistory.Targets)
@@ -909,6 +1012,7 @@ namespace DisplayWeave
                 {
                     failureHistory.ClearTarget(target);
                     failed.Remove(target.Key);
+                    faulted.Remove(target.Key);
                 }
             }
         }
@@ -1083,6 +1187,7 @@ namespace DisplayWeave
             // Tick resolves paused sessions against the current rules and layout
             // before sending ON. Reuse their hosts to avoid reattachment races.
             failed.Clear();
+            faulted.Clear();
             released.Clear();
             Paused = false;
             LastMessage = "Automatic regions and saved rules active; waiting for application windows.";
@@ -1104,6 +1209,7 @@ namespace DisplayWeave
         {
             released.Remove(identity.ProcessKey);
             failed.Remove(identity.Key);
+            faulted.Remove(identity.Key);
         }
 
         public void Dispose()
@@ -1142,8 +1248,7 @@ namespace DisplayWeave
                     session.Host.WaitForExit(600);
                 }
             }
-            catch (InvalidOperationException) { }
-            catch (IOException) { }
+            catch (Exception) { } // best effort: the helper also switches off when its input closes
             finally { session.Host.Dispose(); }
         }
 

@@ -3,11 +3,8 @@
 Windows virtual-monitor compatibility preview with automatic region detection, custom
 screen regions, and optional per-application rules.
 
-For development or AI-agent continuation, start with [AGENTS.md](AGENTS.md), the
-[current handoff](docs/agent-handoff.md), and the [development runbook](docs/development.md).
-They distinguish the installed app and unfinished work. The experimental virtual-display
-prototype, which runs your app on a temporary virtual display without loading anything
-into it, is on the [`prototype` branch](https://github.com/alexchaoss/DisplayWeave/tree/prototype).
+For development or AI-agent continuation, start with [AGENTS.md](AGENTS.md) and the
+[development runbook](docs/development.md).
 
 ## Install or update
 
@@ -65,7 +62,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
 Run the same script again to install the newest published release, including
-preview releases. To choose a release, add `-Version v0.5.5-preview`.
+preview releases. To choose a release, add `-Version v0.5.6-preview`.
 The script verifies the release ZIP's SHA-256 checksum before installation.
 It does not request administrator rights or store a GitHub token.
 
@@ -73,7 +70,7 @@ You can also download the ZIP and its `.sha256` file from the releases page and
 install without the GitHub CLI:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -PackagePath .\DisplayWeave-0.5.5-preview.zip -ChecksumPath .\DisplayWeave-0.5.5-preview.zip.sha256
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -PackagePath .\DisplayWeave-0.5.6-preview.zip -ChecksumPath .\DisplayWeave-0.5.6-preview.zip.sha256
 ```
 
 The default installation is `%LOCALAPPDATA%\DisplayWeave`. Each release has its
@@ -113,8 +110,22 @@ for detailed activity, shortcuts, and Exit. **Save layout** and **Pause handling
 **Resume handling** stay visible on every tab. The bottom activity line opens
 Status & help when clicked; hover it to read a longer message.
 
+**Status & help** lists every app DisplayWeave handles or tried to handle, with its
+display, region and status: **Working**, **Starting**, **Not active**, **Fitted from
+outside** or **Error**. Select a row to read exactly what happened and what to do.
+The status at the top right opens this list. When the layout's display is missing
+or its regions no longer fit it, the status reads **Layout needs attention** and the
+message names the displays Windows reports. Another display or region tool can
+rename them; exit it. If DisplayWeave hits an internal error with one app, it leaves
+only that app alone and shows the error on its row; every other app stays handled.
+Choose **Apply saved rules** or Force fullscreen to retry that app. Status & help keeps
+the technical details for a bug report.
+
 1. On **Layout**, choose a display and optionally a preset. Set **Grid every (px)** to the desired ruler
-   spacing (for example 10, 50, or 100 pixels).
+   spacing (for example 10, 50, or 100 pixels). Presets are computed for the display's size, shape
+   and Windows scaling. Halves, columns and quadrants are equal. **Wide center** keeps a 16:9 center
+   at full height with two equal sides: 1980 | 3720 | 1980 on a 7680 × 2100 work area, and
+   440 | 2560 | 440 on a 3440 × 1440 display. On a 16:9 display it uses quarters instead.
 2. Drag the pins along the horizontal rulers to set column widths, or along the
    vertical rulers to set row heights. Pins snap to the pixel grid and stop before
    crossing their neighbors. Double-click a ruler, or use **Add width pin** /
@@ -133,7 +144,7 @@ Status & help when clicked; hover it to read a longer message.
    same tab, then **Force fullscreen**. Wait for the ready status and try the
    app's fullscreen command again.
 6. Some apps refuse DisplayWeave's component (Status & help reports a loader
-   failure, as Diablo IV does). Run those in their **windowed** mode and maximize
+   failure). Run those in their **windowed** mode and maximize
    them: automatic handling then fits the maximized window into its current region
    from outside. See [Apps that refuse the component](#apps-that-refuse-the-component).
 7. Use **Ignore this app** to save an exclusion, **Restore selected** to release
@@ -143,7 +154,10 @@ Portable rules and layout are saved beside the executable as `rules.xml` and
 `layout.xml`; installed copies use the shared `data` folder.
 Saved rules apply on the next launch and to future matching application windows.
 They match the full executable path and window class, with one target window and
-region per process. A missing region or monitor is not silently substituted.
+region per process. A missing region or monitor is not silently substituted; the
+app shows as **Error** in Status & help until you assign it a region again. If
+`rules.xml` cannot be read, DisplayWeave starts without rules, says so, and copies
+the file to `rules.xml.unreadable.bak` before a save can replace it.
 Changing a layout pauses handling; **Save layout** saves and resumes it.
 **Apply saved rules** also saves and resumes. Manual Force and Ignore rules take
 priority over automatic region selection. Automatic mode does not create saved
@@ -166,7 +180,8 @@ remains open with an error so edits are not silently lost.
 Regions form a complete grid with no gaps or overlaps, up to nine cells. A width
 pin runs through every row; a height pin runs through every column. The outer
 display edges remain exact even when its dimensions are not a multiple of the
-grid spacing. Interior dividers and presets snap to the chosen spacing. A spacing
+grid spacing. Interior dividers snap to the chosen spacing; a preset lowers the spacing
+when needed (to 20 px for 1980 | 3720 | 1980) so its regions stay exact. A spacing
 that cannot fit the existing dividers is rejected without changing the layout.
 
 Moving pins retains application assignments. Splitting or merging gives the
@@ -182,7 +197,7 @@ The interface reports shortcuts already used by another program.
 
 ## Apps that refuse the component
 
-Some apps, including Diablo IV, refuse to load DisplayWeave's component, so a
+Some apps refuse to load DisplayWeave's component, so a
 Force rule cannot keep them in a region. From version 0.5.3, automatic handling (and a Force rule)
 falls back for any app whose component did not load: run the app windowed and
 maximize it from its title bar, and DisplayWeave moves the maximized window from
@@ -200,24 +215,24 @@ window to the whole monitor. An app that keeps changing its own maximized size i
 left alone after three moves, with a message in Status & help.
 
 The app still sees the whole monitor, so its own fullscreen or "windowed
-fullscreen" modes still fill the monitor. Each move resizes the app's window; overlays
-that hook the game's graphics, such as Discord's in-game overlay, can crash some games
-on a resize (observed with Diablo IV), so disable them if that happens.
+fullscreen" modes still fill the monitor. Each move resizes the app's window; in-game
+overlays from other programs that hook a game's graphics can crash some games on a
+resize, so disable them if that happens.
 A rules file containing a Maximize in region rule cannot be read by 0.5.1 or older.
 
-## Battle.net launcher compatibility
+## Launcher exclusion
 
-Version 0.4.3 excludes `Battle.net.exe`, `Battle.net Launcher.exe`, and
-`Battle.net Helper.exe` from region hooks because crashes have been reported
-while the launcher is hooked. The exclusion applies to automatic handling,
-manual Force rules, saved rules, and direct native-helper requests. It matches
-complete executable names, not folders or parent processes: Diablo IV and other
-games remain eligible for region handling.
+Version 0.4.3 excludes one game launcher from region hooks because crashes have been
+reported while it is hooked; `LauncherProcessProtection` in
+`src/DisplayWeave.Core/FullscreenController.cs` lists its executable names. The
+exclusion applies to automatic handling, manual Force rules, saved rules, and direct
+native-helper requests. It matches complete executable names, not folders or parent
+processes, so games started by the launcher remain eligible for region handling.
 
-After updating, exit and reopen Battle.net if it was already running with an
+After updating, exit and reopen the launcher if it was already running with an
 older DisplayWeave component. Pausing DisplayWeave does not unload that resident
 component. The launcher runs at its normal size; region rules still apply to
-eligible games. This is a compatibility exclusion, not a fix to Chromium itself.
+eligible games.
 
 ## Apps running as administrator
 
@@ -250,10 +265,8 @@ tray icon. Use **Exit DisplayWeave** from the tray before running the ordinary
 updater. Windows can block messages from a normal launcher or updater to an
 administrator instance. After exiting it, an ordinary launch runs normally again.
 
-In the investigated Diablo IV case, the game was running with administrator
-access while DisplayWeave was not. The elevation mismatch was confirmed;
-Diablo IV fullscreen compatibility has not been verified. Matching permissions
-does not establish compatibility with the game's graphics API or protections.
+Matching permissions does not establish compatibility with a game's graphics API
+or protections.
 
 ## Fullscreen engine
 
@@ -283,7 +296,6 @@ that was not the target thread's `GetLastError`. The new diagnostic reports the
 observed thread result, process state, and module verification separately. A raw
 thread result is not interpreted as a Windows loader error or a full module handle.
 The original loader error remains unknown when it was not captured in that thread.
-This diagnostic update does not establish a fix for Diablo IV compatibility.
 
 The new engine does not intercept DirectX or alter swapchain fullscreen state.
 It targets applications that size their fullscreen or maximized windows using
@@ -294,9 +306,7 @@ The native component stays loaded until the target application exits. Ignore,
 pause, exiting DisplayWeave, and controller heartbeat expiry make its hooks pass
 through and request restoration of the window. Restart the target application
 to unload the component completely. Depending on an application's own fullscreen
-state, its fullscreen control may be needed after release. Version 0.3 uses a new
-native protocol: applications that loaded an incompatible pre-0.3 component must
-be restarted before the new component can manage them. No unrelated application
+state, its fullscreen control may be needed after release. No unrelated application
 is forcibly closed during an update.
 
 Version 0.4.1 reconnects to an existing compatible component after its previous
@@ -304,14 +314,17 @@ controller exits. It checks the target window, protocol, and exclusive controlle
 ownership, then waits for fresh acknowledgements before resuming handling. A
 different installation folder alone no longer requires restarting an app.
 
-Old resident components keep their original engine until the target app restarts;
-for example a 0.4 component retains its DXGI interception. The interface identifies
-legacy reconnections. A new installation does not replace code inside a running app.
+A reconnected component keeps the engine it was loaded with until the target app
+restarts; a new installation does not replace code inside a running app. The
+component also takes over any other window of the same app, such as a second
+browser window.
 
-An incompatible component, multiple loaded copies, or a newly created window
-that the resident component has never prepared still requires restarting the
-target app. Only these cases show a restart instruction. Close and reopen the
-target app, then choose **Save layout** or **Apply saved rules** to retry. Closing
+A component from an earlier build under another name or native protocol stays
+loaded but inactive. DisplayWeave loads its current component beside it, so the app
+does not need a restart. A restart is needed only when a loaded DisplayWeave
+component could not install its hooks or its control data is damaged; only these
+cases show a restart instruction. Close and reopen the target app, then choose
+**Save layout** or **Apply saved rules** to retry. Closing
 a window may leave some apps running in their tray. App-specific failures remain
 visible in the footer and **Status & help** even when another app reconnects.
 
@@ -328,10 +341,13 @@ version files. Release archives contain no personal settings.
 - A Direct3D 11 windowed rendering fixture exercises monitor APIs, layout changes,
   restoration, loading, and continued rendering; see `TESTING.md` for actual results.
 - No graphics-API exclusive-fullscreen interception in the new engine. Commercial
-  game compatibility, including Diablo IV, remains unverified.
+  game compatibility remains unverified.
 - A confirmed elevation mismatch can be addressed with the explicit administrator
   restart above. Protected applications may still reject the hook; no protection
-  bypass is attempted. Diablo IV fullscreen handling has not been verified.
+  bypass is attempted.
+- Apps that are not DPI-aware are confined at the wrong size when Windows display
+  scaling is above 100%. DPI-aware apps, which include most games, fit their region
+  exactly.
 - One selected window per process, one editable monitor layout, up to nine custom
   regions. Different independent processes can occupy different regions.
 
@@ -366,8 +382,7 @@ code in `native/legacy`; build scripts are in `scripts/`, installers in `install
 [runbook](docs/development.md#repository-layout)). MinHook's license
 is preserved in `third_party/minhook/LICENSE.txt` and copied into the distribution.
 GitHub Actions is configured to build both architectures, run noninteractive checks,
-and upload the portable packages and test reports. The [handoff](docs/agent-handoff.md)
-records the latest observed CI blocker and local validation. `src/DisplayWeave/version.txt` and
+and upload the portable packages and test reports. `src/DisplayWeave/version.txt` and
 `release.json` define the package version.
 
 ## Use the engine without the UI
@@ -382,7 +397,8 @@ the user:
 - `Pause`, `ApplySavedRules`, `ApplyLayout`
 
 `Layout`, `Rules` and `Engine` expose the full state, and save failures surface as
-`IOException`. A minimal host:
+`IOException`. `Engine.HandledApps()` lists each handled app with its state, region
+and error; `Engine.LayoutProblem` says why the layout cannot be used. A minimal host:
 
 ```csharp
 // csc /r:DisplayWeave.Core.dll /r:System.Drawing.dll Headless.cs

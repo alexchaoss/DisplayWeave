@@ -218,13 +218,42 @@ namespace DisplayWeave
                     {
                         model.ApplyPreset(kind);
                         AssertPartition(model.Zones, area);
-                        foreach (int pin in model.VerticalPins) Assert(pin > 0 && pin < area.Width && pin % 100 == 0, "Invalid width pin.");
-                        foreach (int pin in model.HorizontalPins) Assert(pin > 0 && pin < area.Height && pin % 100 == 0, "Invalid height pin.");
+                        foreach (int pin in model.VerticalPins) Assert(pin > 0 && pin < area.Width && pin % model.GridStep == 0, "Invalid width pin.");
+                        foreach (int pin in model.HorizontalPins) Assert(pin > 0 && pin < area.Height && pin % model.GridStep == 0, "Invalid height pin.");
                     }
                     bool readOnly = false;
                     try { model.VerticalPins.Add(7); }
                     catch (NotSupportedException) { readOnly = true; }
                     Assert(readOnly, "External callers can corrupt ruler pins.");
+                });
+
+                test("Presets follow each display's size, aspect ratio and scaling", delegate
+                {
+                    // width, height, scale %, preset, expected vertical pins, expected horizontal pins
+                    object[][] cases = {
+                        new object[] { 7680, 2100, 125, 2, new[] { 1980, 5700 }, new int[0] }, // 1980 | 3720 | 1980: 16:9 center
+                        new object[] { 7680, 2100, 125, 0, new[] { 3840 }, new int[0] },
+                        new object[] { 7680, 2100, 125, 1, new[] { 2560, 5120 }, new int[0] },
+                        new object[] { 7680, 2100, 125, 3, new[] { 3840 }, new[] { 1050 } },
+                        new object[] { 3440, 1440, 100, 2, new[] { 440, 3000 }, new int[0] },   // 2560 x 1440 center
+                        new object[] { 5120, 1440, 100, 2, new[] { 1280, 3840 }, new int[0] },
+                        new object[] { 1920, 1040, 125, 2, new[] { 480, 1440 }, new int[0] },   // 16:9 display: quarters
+                        new object[] { 2560, 1440, 100, 1, new[] { 860, 1700 }, new int[0] },   // 853.3 rounds to 20 px
+                        new object[] { 5120, 1400, 150, 2, new[] { 1320, 3800 }, new int[0] }   // 60 px: whole logical pixels at 150%
+                    };
+                    foreach (object[] c in cases)
+                    {
+                        Rectangle area = new Rectangle(0, 0, (int)c[0], (int)c[1]);
+                        LayoutSettings settings = new LayoutSettings();
+                        RulerLayout model = new RulerLayout(settings, area);
+                        model.ApplyPreset((int)c[3], (int)c[2]);
+                        string label = area.Width + " x " + area.Height + " at " + c[2] + "% preset " + c[3];
+                        Assert(String.Join(",", model.VerticalPins) == String.Join(",", (int[])c[4]) &&
+                            String.Join(",", model.HorizontalPins) == String.Join(",", (int[])c[5]),
+                            label + " gave " + String.Join(",", model.VerticalPins) + " / " + String.Join(",", model.HorizontalPins));
+                        AssertPartition(model.Zones, area);
+                        Assert(!new RulerLayout(settings, area).WasRepaired, label + " is moved off its pins on reload.");
+                    }
                 });
 
                 test("Divider collisions and edge drags clamp without crossing neighbors", delegate

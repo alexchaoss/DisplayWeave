@@ -5,6 +5,8 @@
 // Same layout for x86 and x64. The controller is the only configuration writer.
 // The DLL writes status fields 64..84 and 92; configuration remains host-owned.
 #define RS_PROTOCOL_MAGIC 0x52534731u
+// Bump together with the Local\DisplayWeave_* mapping and DisplayWeave.*.v2 window-property
+// names, so an older resident hook stays a separate pass-through hook instead of blocking attachment.
 #define RS_PROTOCOL_VERSION 2u
 #define RS_CAP_USER32 1u
 #define RS_CAP_DXGI 2u

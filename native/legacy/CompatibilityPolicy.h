@@ -2,7 +2,7 @@
 #include <wchar.h>
 
 // These launcher processes have reported crashes when prepared by our hooks.
-// Match only complete image basenames: games launched by Battle.net remain
+// Match only complete image basenames: games started by the launcher remain
 // eligible, including games installed beneath similarly named directories.
 inline bool RS_IsIncompatibleLauncher(const wchar_t* image) {
     if (!image || !*image) return false;

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Runtime.InteropServices;
@@ -28,6 +29,13 @@ namespace DisplayWeave
                 return AutomaticControllerIntegration.Run(Path.GetFullPath(args[1]), Path.GetFullPath(args[2]));
             if (args.Length >= 3 && args[0] == "--verify-monitor-controller")
                 return AutomaticControllerIntegration.RunMonitor(Path.GetFullPath(args[1]), Path.GetFullPath(args[2]));
+            // An error on a background thread ends the process whatever this does, so at least say why.
+            // The helpers see their input close and switch their hooks off.
+            AppDomain.CurrentDomain.UnhandledException += delegate(object sender, UnhandledExceptionEventArgs e)
+            {
+                MessageBox.Show("DisplayWeave stopped after an unexpected error.\n\n" + e.ExceptionObject, "DisplayWeave stopped",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            };
             AppOptions options;
             try { options = AppOptions.Parse(args); }
             catch (Exception ex)
@@ -84,12 +92,31 @@ namespace DisplayWeave
                 }
                 try
                 {
-                    using (var form = new MainForm(options.AutomaticExecutableFilter, options.DataDirectory, options.StartMinimized))
+                    MainForm window;
+                    try { window = new MainForm(options.AutomaticExecutableFilter, options.DataDirectory, options.StartMinimized); }
+                    catch (Exception ex)
                     {
+                        MessageBox.Show("DisplayWeave could not start.\n\n" + ex.Message, "DisplayWeave could not start", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return 2;
+                    }
+                    using (var form = window)
+                    {
+                        // A window or button error is reported without pausing: region handling is unaffected.
+                        // One dialog per distinct error: an error that repeats, in a paint or a timer, must not stack dialogs.
+                        HashSet<string> shown = new HashSet<string>();
+                        bool showing = false;
                         Application.ThreadException += delegate(object sender, ThreadExceptionEventArgs e)
                         {
-                            form.PauseFullscreenRules();
-                            MessageBox.Show("Windows have been released after an error.\n\n" + e.Exception.Message, "DisplayWeave");
+                            try { form.ReportInternalError(e.Exception, false); }
+                            catch (Exception) { } // the dialog below still explains
+                            if (showing || !shown.Add(e.Exception.Message)) return;
+                            showing = true;
+                            try
+                            {
+                                MessageBox.Show("DisplayWeave hit an unexpected error. Region handling continues.\n\n" + e.Exception.Message +
+                                    "\n\nDetails for a bug report are in Status & help.", "DisplayWeave", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            }
+                            finally { showing = false; }
                         };
                         try { Application.Run(form); }
                         finally { form.PauseFullscreenRules(); }

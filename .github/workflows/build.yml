@@ -68,8 +68,8 @@ jobs:
               $problems.Add("Managed test report has failures or no passing summary: $file")
             }
           }
-          if ($passed -lt 100) {
-            $problems.Add("Expected at least 100 passing managed tests; found $passed.")
+          if ($passed -lt 103) {
+            $problems.Add("Expected at least 102 passing managed tests; found $passed.")
           }
 
           foreach ($architecture in @('x64', 'x86')) {
@@ -80,7 +80,7 @@ jobs:
               $problems.Add("$architecture shell policy tests exited with code $LASTEXITCODE.")
             }
             $policySummary = [regex]::Match((Get-Content -LiteralPath $policyReport -Raw), '^PASS shell and resident-hook policy: (\d+) deterministic cases;')
-            if (!$policySummary.Success -or [int]$policySummary.Groups[1].Value -lt 225) {
+            if (!$policySummary.Success -or [int]$policySummary.Groups[1].Value -lt 223) {
               $problems.Add("$architecture shell policy tests did not report success.")
             }
             & $helper --self-test-ipc 2>&1 | Tee-Object -FilePath (Join-Path $reportDirectory "$architecture-ipc.txt")

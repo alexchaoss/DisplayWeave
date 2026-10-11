@@ -27,7 +27,119 @@ release, pause and exit return a still-maximized window to its monitor's work ar
   the harness's "Windows maximized to the work area" precondition failed; it does
   not affect the fit. The first attempt used a DPI-unaware PowerShell form that the
   user's running 0.5.1 attached to automatically, which invalidated that run.
-- Not yet verified with Diablo IV or any real game.
+- Not yet verified with any real game.
+
+## Presets and attaching without an app restart (October 11, 2026)
+
+Reported: the user's browser (PID 3144, running since October 8) failed with "Restart the target
+application; its resident DisplayWeave hook has no accessible control mapping (Windows
+error 1306)". Read-only inspection: the browser held `RegionHook.dll` from an October 9
+pre-rename build (`Local\RegionScreen_3144`, `RegionScreen.*.v2` window properties). Its
+controller was long gone. The helper counted any module named `RegionHook.dll` as its own,
+then found no `Local\DisplayWeave_3144`.
+
+Changes:
+- The helper reuses a resident worker only when `Local\DisplayWeave_<pid>` already exists
+  (`CreateFileMapping` reports `ERROR_ALREADY_EXISTS`); the module-name scan is gone. Any
+  other `RegionHook.dll` stays inactive beside a freshly loaded component, and the
+  standard-loader fallback counts only the exact DLL path it loaded.
+- A live resident worker takes over a window it never registered, such as a second
+  window of the same process; it subclasses that window before acknowledging. Restart
+  remains only for a worker whose hooks failed (`hookReady = -1`) or a damaged mapping.
+- Presets come from the display's size, aspect ratio and Windows scaling
+  (`DisplayMonitor.ScalePercent`, `RulerLayout.PresetPins`). Equal splits stay exact on
+  whole logical pixels; other sizes round to 20 px that are also whole logical pixels.
+  Wide center keeps a 16:9 center at full height with equal sides, or quarters when
+  the sides would be under 1/8 of the width. The grid drops to the greatest common
+  divisor of itself and the preset pins, so a reload never moves them. A first start
+  applies this display's halves.
+
+Checks, working tree on top of `0748abb`, x64 Windows 11, 7680 × 2100 work area at 125%:
+- `scripts/release.ps1`: managed 103 (layout 20, rules 42, automatic 13, lifecycle 28);
+  native policy 223 on x64 and x86 (the handoff table lost its multiple-hook and
+  unregistered-window cases), IPC, installer 20, setup 6. The new layout case checks
+  exact pins for nine display/scale/preset cases, including 1980 | 3720 | 1980, and
+  that each layout reloads unchanged.
+- Live, owned x64 WinForms probe (`FullscreenProbe.exe`, so the user's running
+  DisplayWeave skipped it) with two windows, helpers run directly, Force mode:
+  - The installed RegionScreen 0.5.4 helper attached and quit, leaving its hook resident.
+    The installed DisplayWeave 0.5.5 helper then reproduced the reported 1306 error.
+  - The new helper attached fresh beside it (`READY`), maximize landed exactly in
+    `0,0,1920,1080`, a second controller was refused (183), and QUIT restored
+    `48,40,450,279`.
+  - The new helper then took the probe's second window through its own resident worker
+    (`READY ... REUSED`), fitted `1920,0,4480,1440` exactly and restored `48,320,450,559`.
+  - Same sequence with the installed 0.5.5 hook resident: the new helper reused it for
+    both windows with the same exact fits and restores.
+- Live, real `MainForm` hosted in-process with automatic regions off: scaling read 125%;
+  the real **Use preset** button with Wide center listed 1980 × 2100, 3720 × 2100 and
+  1980 × 2100 with a 20 px grid. Halves 3840 | 3840, columns 2560 × 3, quadrants
+  3840 × 1050 (10 px grid).
+- Harness note: a PowerShell console set to UTF-8 writes a byte-order mark before the
+  first helper command, which the helpers report as `Unknown command`. The app writes
+  without one; the scripts above set a BOM-less input encoding.
+- Installed as 0.5.6-preview with `DisplayWeave-Setup-0.5.6-preview.exe --quiet` (release gate
+  at 0.5.6: managed 103, native checks, installer 20, setup 6). Setup exit 0. The running
+  0.5.5 left through `--exit-for-update` with no helper left. `current.json`, the uninstall
+  entry and the sign-in entry show 0.5.6-preview, and settings were kept. A 0.5.6 helper
+  attached to the browser that 0.5.5 had refused with 1306. The browser then held both
+  the pre-rename hook and the 0.5.6 hook. After a graceful restart, the next helper reused
+  the 0.5.6 hook already in the browser.
+- Not run: x86 targets live, and `tests/test-handoff.ps1`, which still expects the 0.4 DXGI
+  capability.
+
+## Robustness and the handled-app list (October 11, 2026)
+
+Changes:
+- Status & help lists the apps the engine handles (`FullscreenController.HandledApps`):
+  helpers, maximized fits, recorded failures, and listed windows whose saved rule names
+  a missing region. Selecting a row shows the full reason. A fit after a component
+  failure keeps that failure as its reason after the fit succeeds.
+- A layout the engine cannot resolve sets `LayoutProblem`, shown as "Layout needs
+  attention" with the display names Windows reports. Before, the engine skipped every
+  window while the header said "Handling active".
+- An exception while handling one app (its helper session, its window, or its
+  maximized fit) leaves only that app alone. Its row shows the error, the stack goes
+  to Status & help, and the other apps stay handled. Resume, Force or closing the app
+  clears it. Only an exception outside any app's handling pauses everything. A window
+  or button error is reported without pausing. One dialog per distinct error, so a
+  repeating error cannot stack dialogs. A failed window construction shows a message
+  and exits with code 2. A background-thread error shows the reason before the process
+  ends.
+- A first start no longer pauses itself. The default layout's split snaps to the
+  100 px grid (3840 to 3800 on a 7680 px display), which was treated as repairing a
+  saved layout: handling paused with "The previous layout was adjusted".
+- An unreadable `rules.xml` is copied to `rules.xml.unreadable.bak` before the next
+  save can replace it.
+
+Checks:
+- `scripts/release.ps1`: managed 102 (layout 19, rules 42, automatic 13, lifecycle
+  28). New cases cover a failed attach (no helper), a rule naming a removed region, an
+  ignored app, a missing layout display, and an app whose handling throws: the other
+  app is still handled in the same tick, the failed app is skipped afterwards, nothing
+  pauses, and Resume retries it. With the per-app catch removed, that case fails. The
+  RegionService case covers the unreadable-rules backup. Native checks passed;
+  installer tests 20, setup tests 6.
+- While the user's RegionScreen 0.5.4 ran, its hook was loaded into each shown test
+  process, and monitor APIs there reported `\\.\REGIONSCREEN1..3` instead of
+  `\\.\DISPLAY1`. The new layout message reported exactly that. The user then quit
+  RegionScreen for the live checks below.
+- Live, 7680 × 2100 work area at 125% scaling, owned probe windows only, automatic
+  regions off so no other window was handled:
+  - Real `DisplayWeave.exe` with real helpers. A first start with no settings was not
+    paused. A probe with a Force rule to region 1 listed as `Working · Region 1 ·
+    3800 × 2100`. A probe whose rule named a removed region listed as `Error` with that
+    reason, and it maximized to the whole work area. A DPI-aware probe maximized exactly
+    into `0,0,3800,2100`. After exit both probes were back at their original
+    rectangles, with no helper left.
+  - Real `MainForm` hosted in-process, two DPI-aware probes with Force rules to regions
+    1 and 2, both ready. A simulated bug in probe A's handling: not paused, B still
+    `Working` and maximized exactly into `3800,0,7680,2100`. A listed as `Error` with
+    the reason, and its maximize filled the whole work area (left alone).
+- Found: a probe that is not DPI-aware maximized to `0,0,4750,2625` instead of
+  `0,0,3800,2100`, the region scaled by 125%. The native hook reports physical region
+  coordinates to a process whose coordinates Windows scales. Not fixed.
+- Not run: a real game.
 
 ## Security and speed fixes (October 11, 2026)
 
@@ -185,7 +297,7 @@ and retries the component.
   rule's region, stayed fitted on later ticks, and controller disposal (Exit)
   returned it to the monitor. The rule phase above passed again on this code.
 - Installer script unchanged since the 16/16 run for 0.5.2; not rerun.
-- Not yet verified with Diablo IV or any real game.
+- Not yet verified with any real game.
 
 ## Version 0.5.1 loader diagnostics
 
@@ -199,7 +311,7 @@ The rejecting-DLL fixture deliberately returns FALSE from DllMain only in its ow
 hidden test process. An immediate local LoadLibraryW/GetLastError call records the
 actual 1114. The helper's separate load attempt must report its own missing-module
 diagnostic, leave the fixture alive and unchanged, and never invoke initialization.
-This fixture does not start a game or establish why Diablo's DLL load failed.
+This fixture does not start a game or establish why a game's DLL load failed.
 
 ```powershell
 .\test-loader-failure.ps1 -Architecture all -BuildDirectory .\release\build-0.5.1
@@ -264,7 +376,7 @@ Local 0.5.0-preview validation (2026-10-09):
 - The desktop and taskbar remained at the physical display dimensions.
 - Import inspection confirmed neither new hook DLL imports D3D or DXGI.
 
-Diablo IV was closed and was not tested. No real launcher or game was started by
+No real launcher or game was started by
 these checks. No claim of commercial-game compatibility follows from fixture tests.
 
 ## Reproducible noninteractive checks
@@ -311,7 +423,7 @@ elevation and do not prove cross-integrity integration. The lifecycle tests insp
 constructed launch options, quoting, preserved paths, process-ID validation and
 the bounded wait policy; they do not open UAC prompts or start an elevated app.
 
-Read-only inspection confirmed that Diablo IV was elevated at high integrity
+Read-only inspection confirmed that the user's game was elevated at high integrity
 while DisplayWeave ran at medium integrity. This is a permission diagnosis, not
 a successful game integration test. UAC acceptance/cancellation and elevated
 game handling have not yet been validated interactively for 0.4.2.
@@ -391,33 +503,33 @@ Local validation also passed 84 managed checks, 132 native policy/atomic cases p
 architecture, IPC security tests, ordinary managed automatic rendering tests,
 0.4.0-to-0.4.4 resident handoff and all 12 launcher exclusion fixtures. Both normal
 and filtered rendering tests had zero failed presents. A third-party display
-tool's DLL was also loaded in the probes. Diablo IV startup and fullscreen behavior remain unverified. Its
-missing control mapping after timeout motivated this investigation but does not
+tool's DLL was also loaded in the probes. The user's game's startup and fullscreen behavior remain
+unverified. Its missing control mapping after timeout motivated this investigation but does not
 prove it uses the fixture's exact message filter.
 
 ## Manual release checks
 
-Version 0.4.3 excludes the Battle.net launcher executables before native
+Version 0.4.3 excludes a game launcher's executables before native
 attachment, including attempts through manual and saved rules. Local validation
 passed **82 managed checks**, **114 native policy cases per architecture**, and
 the existing x64/x86 IPC checks. The launcher fixture harness passed **12 native
 attachment rejection checks** across three exact image names, two architectures,
 and automatic/manual helper modes. Hidden copies of our own D3D11 probe confirm
 rejection leaves the target alive without a DisplayWeave DLL or control mapping.
-The harness never starts or hooks the user's Battle.net launcher:
+The harness never starts or hooks the user's launcher:
 
 ```powershell
 .\test-compatibility.ps1 -BuildDirectory .\release\build-0.4.3
 ```
 
-Observed Battle.net reports contain a Chromium breakpoint with both DisplayWeave
+Observed launcher crash reports contain a breakpoint with both DisplayWeave
 and a third-party display tool's components loaded. A loaded DLL does not establish that its controller
 was active or identify the cause of the crash. This release mitigates the
 DisplayWeave attachment risk by leaving the launcher unmanaged; it does not
-claim a Chromium-level correction.
+claim a fix in the launcher itself.
 
 After updating, reopen any launcher that previously loaded an older hook before
-assessing stability. Confirm Battle.net remains usable while game windows can
+assessing stability. Confirm the launcher remains usable while game windows can
 still use region handling. Real-launcher stability remains a user verification.
 
 - Start with `--minimized`: the tray icon should appear without opening settings.
@@ -440,13 +552,13 @@ still use region handling. Real-launcher stability remains a user verification.
 - With administrator access active, test an authorized elevated game and an
   ordinary application separately. Check preparation, the chosen region,
   maximize/fullscreen, leaving fullscreen, and restoration on release. Record
-  the graphics API and actual results; include Diablo IV before claiming support.
+  the graphics API and actual results before claiming support.
 - Reopen the administrator instance from its tray icon, then exit it from the
   tray before using the ordinary updater. Verify that the normal shortcut can
   launch DisplayWeave without elevation after that exit.
 
 Elevation alone does not establish fullscreen compatibility. Protected apps,
-Direct3D 9, OpenGL, Vulkan, and individual commercial applications, including
-Diablo IV, have not been certified. Physical exclusive scanout within only
+Direct3D 9, OpenGL, Vulkan, and individual commercial applications have not been
+certified. Physical exclusive scanout within only
 part of a monitor is not implemented. Versions through 0.4 translated DXGI requests
 to a windowed swapchain; new 0.5 components do not change graphics-API state.

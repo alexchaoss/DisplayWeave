@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Forms;
 
 namespace DisplayWeave
@@ -49,6 +50,8 @@ namespace DisplayWeave
         private bool updating;
         private string notice = "Apps automatically use their current region when maximized or fullscreen. Use a manual rule if needed.";
         private string lastEngineError = "";
+        private string internalError = "";
+        private string handledSignature;
         private string hotkeyNotice = "";
         private bool picking;
         private ApplicationIdentity pickedIdentity;
@@ -83,7 +86,14 @@ namespace DisplayWeave
             InitializeTray();
             if (!layoutDirty) SetLayoutState("Saved layout loaded · " + settings.Zones.Count + " regions · " + settings.GridStepPixels + " px grid", false);
             timer.Interval = 250;
-            timer.Tick += delegate { service.Tick(); UpdateStatus(); };
+            timer.Tick += delegate
+            {
+                // The engine isolates each app's errors; one that still escapes affects every app, so handling
+                // pauses. It must not end DisplayWeave or raise a dialog every tick.
+                try { service.Tick(); }
+                catch (Exception ex) { ReportInternalError(ex, true); }
+                UpdateStatus();
+            };
             timer.Start();
             // Administrator mode never updates: the setup and gh would run elevated from user-writable folders.
             if (installRoot != null && String.IsNullOrWhiteSpace(automaticExecutableFilter) && !ElevationRestart.IsElevated())
@@ -150,6 +160,11 @@ namespace DisplayWeave
         private Screen CurrentScreen { get { return screens != null && monitors.SelectedIndex >= 0 && monitors.SelectedIndex < screens.Length ? screens[monitors.SelectedIndex] : Screen.PrimaryScreen; } }
         private Rectangle Area { get { return workArea.Checked ? CurrentScreen.WorkingArea : CurrentScreen.Bounds; } }
 
+        private int ScalePercent
+        {
+            get { DisplayMonitor monitor = DisplayMonitor.Find(CurrentScreen.DeviceName); return monitor == null ? 100 : monitor.ScalePercent; }
+        }
+
         private void LoadMonitors()
         {
             updating = true;
@@ -182,7 +197,9 @@ namespace DisplayWeave
             if (rulerLayout == null || rulerLayout.Area != Area)
             {
                 rulerLayout = new RulerLayout(settings, Area);
-                if (rulerLayout.WasRepaired)
+                // A first start uses this display's halves: nothing saved to review, so no pause.
+                if (!File.Exists(service.LayoutPath)) rulerLayout.ApplyPreset(0, ScalePercent);
+                else if (rulerLayout.WasRepaired)
                 {
                     LayoutChanging();
                     notice = "The previous layout was adjusted to a non-overlapping ruler grid. Review the regions before applying saved rules.";
@@ -256,6 +273,23 @@ namespace DisplayWeave
         public void PauseFullscreenRules()
         {
             RestoreAll();
+        }
+
+        // Shows an unexpected error, with details for a bug report in Status & help. Only an engine error outside
+        // any one app's handling pauses (releases) every window; the engine already isolates per-app errors.
+        public void ReportInternalError(Exception error, bool pause)
+        {
+            bool paused = false;
+            if (pause)
+            {
+                try { if (!fullscreen.Paused) { service.Pause(); paused = true; } }
+                catch (Exception) { } // the engine may be what failed; the report must still show
+            }
+            internalError = error.ToString();
+            string reason = error.Message.TrimEnd('.', ' ');
+            Report(pause ? "Region handling paused after an internal error: " + reason + ". Apply saved rules to resume."
+                : "DisplayWeave hit an internal error: " + reason + ". Region handling continues.");
+            if (paused && !Visible) trayIcon.ShowBalloonTip(5000, "DisplayWeave paused region handling", error.Message, ToolTipIcon.Error);
         }
 
         private void ApplySavedRules()
@@ -523,10 +557,13 @@ namespace DisplayWeave
                 lastEngineError = fullscreen.LastMessage;
                 notice = fullscreen.LastMessage;
             }
-            string failure = fullscreen.GetFailure(pickedIdentity);
+            // A layout the engine cannot use stops all handling, so it outranks one app's failure.
+            bool layoutProblem = !fullscreen.Paused && fullscreen.LayoutProblem.Length > 0;
+            string failure = layoutProblem ? fullscreen.LayoutProblem : fullscreen.GetFailure(pickedIdentity);
             if (String.IsNullOrEmpty(failure)) failure = fullscreen.LastFailure;
             bool hasFailure = !String.IsNullOrEmpty(failure);
-            engineState.Text = (fullscreen.Paused ? "Paused" : hasFailure ? "App needs attention" : "Handling active") + "\n" + fullscreen.Count + " ready · " + fullscreen.PendingCount + " attaching";
+            engineState.Text = (fullscreen.Paused ? "Paused" : layoutProblem ? "Layout needs attention" : hasFailure ? "App needs attention" : "Handling active") +
+                "\n" + fullscreen.Count + " ready · " + fullscreen.PendingCount + " attaching";
             engineState.ForeColor = fullscreen.Paused || hasFailure ? Color.FromArgb(150, 80, 14) : Color.FromArgb(31, 112, 73);
             pauseHandling.Text = fullscreen.Paused ? "Resume handling" : "Pause handling";
             string feedback = hasFailure ? failure : notice;
@@ -540,8 +577,87 @@ namespace DisplayWeave
             if (hasFailure && notice != feedback) details += "\r\n\r\nLatest activity: " + notice;
             if (hotkeyNotice.Length > 0) details += "\r\n" + hotkeyNotice.Trim(' ', '·');
             if (updateNotice.Length > 0) details += "\r\n" + updateNotice;
+            if (internalError.Length > 0) details += "\r\n\r\nLast internal error (for a bug report):\r\n" + internalError;
+            if (fullscreen.LastInternalError.Length > 0) details += "\r\n\r\nLast app handling error (for a bug report):\r\n" + fullscreen.LastInternalError;
             if (status.Text != details) status.Text = details;
             if (trayPause != null) trayPause.Text = fullscreen.Paused ? "Resume region handling" : "Pause region handling";
+            if (Visible && pages.SelectedIndex == 2)
+            {
+                // The list only displays state; a problem showing it must not reach handling.
+                try { RefreshHandledApps(); }
+                catch (Exception ex) { handledDetails.Text = "The app list could not be shown: " + ex.Message; }
+            }
+        }
+
+        private static readonly string[] HandledStateNames = { "Starting", "Working", "Not active", "Fitted from outside", "Error" };
+        private static readonly string[] HandledStateHelp =
+        {
+            "DisplayWeave is starting its component in this app. This normally takes a few seconds.",
+            "DisplayWeave's component runs in this app: maximize and fullscreen stay inside its region.",
+            "DisplayWeave's component is loaded but not confining this app right now: handling is paused, the window is on another display, or its rule changed.",
+            "Nothing is loaded into this app. When you maximize it from its title bar, DisplayWeave fits the window into its region from outside. Exclusive fullscreen is not confined.",
+            ""
+        };
+
+        // Rebuilt only when a row changes, so the selection survives the 250 ms refresh.
+        private void RefreshHandledApps()
+        {
+            List<HandledApp> apps = fullscreen.HandledApps();
+            apps.Sort(delegate(HandledApp left, HandledApp right)
+            {
+                int order = String.Compare(Path.GetFileName(left.Target.ExecutablePath), Path.GetFileName(right.Target.ExecutablePath), StringComparison.CurrentCultureIgnoreCase);
+                return order != 0 ? order : String.CompareOrdinal(left.Target.Key, right.Target.Key);
+            });
+            var rows = new List<ListViewItem>();
+            var signature = new StringBuilder();
+            foreach (HandledApp app in apps)
+            {
+                DisplayMonitor monitor = app.Region.IsEmpty ? DisplayMonitor.FromWindow(app.Target.Handle) : DisplayMonitor.FromRectangle(app.Region);
+                var row = new ListViewItem(new[] { Path.GetFileName(app.Target.ExecutablePath), monitor == null ? "—" : monitor.DeviceName.Replace(@"\\.\", ""),
+                    RegionName(app.Region), HandledStateNames[(int)app.State] }) { Name = app.Target.Key, Tag = HandledDetails(app), UseItemStyleForSubItems = false };
+                row.SubItems[3].ForeColor = app.State == HandledAppState.Error ? Color.FromArgb(178, 54, 32) : app.Error.Length > 0 ? Color.FromArgb(150, 80, 14)
+                    : app.State == HandledAppState.Working || app.State == HandledAppState.FittedFromOutside ? Color.FromArgb(31, 112, 73) : Color.FromArgb(75, 89, 110);
+                foreach (ListViewItem.ListViewSubItem cell in row.SubItems) signature.Append(cell.Text).Append('\t');
+                signature.Append(row.Name).Append('\t').Append(row.Tag).Append('\n');
+                rows.Add(row);
+            }
+            if (signature.ToString() != handledSignature)
+            {
+                handledSignature = signature.ToString();
+                string selected = handledApps.SelectedItems.Count > 0 ? handledApps.SelectedItems[0].Name : null;
+                handledApps.BeginUpdate();
+                handledApps.Items.Clear();
+                handledApps.Items.AddRange(rows.ToArray());
+                if (selected != null && handledApps.Items.ContainsKey(selected)) handledApps.Items[selected].Selected = true;
+                handledApps.EndUpdate();
+            }
+            ShowHandledDetails();
+        }
+
+        private string RegionName(Rectangle region)
+        {
+            if (region.IsEmpty) return "—";
+            for (int i = 0; i < settings.Zones.Count; i++)
+                if (settings.Zones[i].ToPixels(Area) == region) return settings.Zones[i].Name + " · " + region.Width + " × " + region.Height;
+            return region.Width + " × " + region.Height + " at " + region.X + ", " + region.Y;
+        }
+
+        // The error first: a long path must not push it out of view.
+        private static string HandledDetails(HandledApp app)
+        {
+            string text = app.State == HandledAppState.Error ? "Error: " + app.Error : HandledStateNames[(int)app.State] + ": " + HandledStateHelp[(int)app.State];
+            if (app.State != HandledAppState.Error && app.Error.Length > 0)
+                text += "\r\n\r\n" + (app.State == HandledAppState.FittedFromOutside ? "Why its component is not used: " : "Problem: ") + app.Error;
+            return text + "\r\n\r\n" + app.Target.ExecutablePath + " (PID " + app.Target.ProcessId + ")";
+        }
+
+        private void ShowHandledDetails()
+        {
+            string text = handledApps.SelectedItems.Count > 0 ? (string)handledApps.SelectedItems[0].Tag
+                : handledApps.Items.Count == 0 ? (!fullscreen.Paused && fullscreen.LayoutProblem.Length > 0 ? fullscreen.LayoutProblem
+                    : "No app is handled right now. Move an app into a region, then maximize it or enter fullscreen, or give it a rule on App rules.")
+                : "Select an app to see exactly what is happening with it.";
+            if (handledDetails.Text != text) handledDetails.Text = text;
         }
 
         protected override void OnHandleCreated(EventArgs e)

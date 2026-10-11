@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 
 namespace DisplayWeave
 {
-    // A monitor's device name and bounds, read straight from Windows so the engine needs no UI library.
+    // A monitor's device name, bounds and scaling, read straight from Windows so the engine needs no UI library.
     public sealed class DisplayMonitor
     {
         private const uint MonitorDefaultToNearest = 2;
@@ -13,6 +13,8 @@ namespace DisplayWeave
         public string DeviceName { get; private set; }
         public Rectangle Bounds { get; private set; }
         public Rectangle WorkingArea { get; private set; }
+        // Windows display scaling, such as 125; 100 when Windows cannot report it.
+        public int ScalePercent { get; private set; }
 
         public static List<DisplayMonitor> All()
         {
@@ -55,8 +57,18 @@ namespace DisplayWeave
             {
                 DeviceName = info.Device,
                 Bounds = Rectangle.FromLTRB(info.Monitor.Left, info.Monitor.Top, info.Monitor.Right, info.Monitor.Bottom),
-                WorkingArea = Rectangle.FromLTRB(info.Work.Left, info.Work.Top, info.Work.Right, info.Work.Bottom)
+                WorkingArea = Rectangle.FromLTRB(info.Work.Left, info.Work.Top, info.Work.Right, info.Work.Bottom),
+                ScalePercent = ReadScale(monitor)
             };
+        }
+
+        private static int ReadScale(IntPtr monitor)
+        {
+            uint dpiX, dpiY;
+            try { if (GetDpiForMonitor(monitor, 0, out dpiX, out dpiY) == 0 && dpiX > 0) return (int)Math.Round(dpiX * 100.0 / 96); }
+            catch (DllNotFoundException) { }
+            catch (EntryPointNotFoundException) { }
+            return 100;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -78,5 +90,6 @@ namespace DisplayWeave
         [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr window, uint flags);
         [DllImport("user32.dll")] private static extern IntPtr MonitorFromRect(ref NativeRect area, uint flags);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
+        [DllImport("shcore.dll")] private static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
     }
 }

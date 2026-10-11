@@ -12,6 +12,8 @@ namespace DisplayWeave
         private readonly Label actionFeedback = new Label();
         private readonly Label savedRuleDetails = new Label();
         private readonly Button pauseHandling = new Button();
+        private readonly ListView handledApps = new ListView();
+        private readonly TextBox handledDetails = new TextBox();
         private readonly ToolTip hints = new ToolTip();
         private Button forceApp, maximizeApp, ignoreApp, restoreApp, removeRule;
         private bool syncingRegion;
@@ -34,6 +36,9 @@ namespace DisplayWeave
             engineState.Dock = DockStyle.Fill;
             engineState.TextAlign = ContentAlignment.MiddleRight;
             engineState.Padding = new Padding(0, 0, 18, 0);
+            engineState.Cursor = Cursors.Hand;
+            engineState.Click += delegate { pages.SelectedIndex = 2; };
+            hints.SetToolTip(engineState, "Click to see each app's status in Status & help.");
             header.Controls.Add(engineState, 1, 0);
             StyleButton(pauseHandling);
             pauseHandling.Text = "Pause handling";
@@ -206,7 +211,7 @@ namespace DisplayWeave
             presets.Items.AddRange(new object[] { "Choose a preset…", "Two halves", "Three columns", "Wide center", "Four quadrants" });
             presets.SelectedIndex = 0;
             presetRow.Controls.Add(presets, 1, 0);
-            presetRow.Controls.Add(Button("Use preset", delegate { if (presets.SelectedIndex <= 0) { notice = "Choose a preset first, or keep your current custom layout."; UpdateStatus(); return; } LayoutChanging(); rulerLayout.ApplyPreset(presets.SelectedIndex - 1); ReloadZones(0); }), 2, 0);
+            presetRow.Controls.Add(Button("Use preset", delegate { if (presets.SelectedIndex <= 0) { notice = "Choose a preset first, or keep your current custom layout."; UpdateStatus(); return; } LayoutChanging(); rulerLayout.ApplyPreset(presets.SelectedIndex - 1, ScalePercent); ReloadZones(0); }), 2, 0);
             var tip = Caption("Double-click a ruler to add a pin.");
             tip.TextAlign = ContentAlignment.MiddleRight;
             presetRow.Controls.Add(tip, 3, 0);
@@ -300,9 +305,10 @@ namespace DisplayWeave
         private void BuildStatusPage(TabPage page)
         {
             page.AutoScroll = true;
-            var body = Table(1, 7);
-            body.Dock = DockStyle.Top; body.Height = 700;
+            var body = Table(1, 8);
+            body.Dock = DockStyle.Top; body.Height = 1030;
             body.RowStyles.Add(new RowStyle(SizeType.Absolute, 66));
+            body.RowStyles.Add(new RowStyle(SizeType.Absolute, 330));
             body.RowStyles.Add(new RowStyle(SizeType.Absolute, 145));
             body.RowStyles.Add(new RowStyle(SizeType.Absolute, 100));
             body.RowStyles.Add(new RowStyle(SizeType.Absolute, 112));
@@ -311,12 +317,36 @@ namespace DisplayWeave
             body.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
             page.Controls.Add(body);
             body.Controls.Add(Introduction("Status & help", "Check handling activity, keyboard shortcuts, and how to keep DisplayWeave running."), 0, 0);
+            var appsBox = new GroupBox { Text = "Apps DisplayWeave is handling · select one to see exactly what happened", Dock = DockStyle.Fill,
+                Padding = new Padding(14), Margin = new Padding(0, 0, 0, 16) };
+            var appsBody = Table(1, 2);
+            appsBody.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            appsBody.RowStyles.Add(new RowStyle(SizeType.Absolute, 130));
+            handledApps.Dock = DockStyle.Fill; handledApps.View = View.Details; handledApps.FullRowSelect = true;
+            handledApps.MultiSelect = false; handledApps.HideSelection = false; handledApps.HeaderStyle = ColumnHeaderStyle.Nonclickable;
+            handledApps.AccessibleName = "Apps DisplayWeave is handling";
+            handledApps.Columns.Add("App"); handledApps.Columns.Add("Display"); handledApps.Columns.Add("Region"); handledApps.Columns.Add("Status");
+            handledApps.SizeChanged += delegate
+            {
+                int width = handledApps.ClientSize.Width;
+                handledApps.Columns[0].Width = width * 30 / 100; handledApps.Columns[1].Width = width * 14 / 100;
+                handledApps.Columns[2].Width = width * 30 / 100; handledApps.Columns[3].Width = width - width * 74 / 100 - 4;
+            };
+            handledApps.SelectedIndexChanged += delegate { ShowHandledDetails(); };
+            handledDetails.Dock = DockStyle.Fill; handledDetails.Multiline = true; handledDetails.ReadOnly = true;
+            handledDetails.BorderStyle = BorderStyle.None; handledDetails.ScrollBars = ScrollBars.Vertical;
+            handledDetails.BackColor = Color.White; handledDetails.ForeColor = Color.FromArgb(35, 59, 89);
+            handledDetails.Margin = new Padding(0, 8, 0, 0);
+            handledDetails.AccessibleName = "Selected app details";
+            appsBody.Controls.Add(handledApps, 0, 0);
+            appsBody.Controls.Add(handledDetails, 0, 1);
+            appsBox.Controls.Add(appsBody); body.Controls.Add(appsBox, 0, 1);
             var activity = new GroupBox { Text = "Current activity", Dock = DockStyle.Fill, Padding = new Padding(14), Margin = new Padding(0, 0, 0, 16) };
             status.Dock = DockStyle.Fill; status.Multiline = true; status.ReadOnly = true;
             status.BorderStyle = BorderStyle.None; status.ScrollBars = ScrollBars.Vertical;
             status.BackColor = Color.White; status.ForeColor = Color.FromArgb(35, 59, 89);
             status.AccessibleName = "Region handling status";
-            activity.Controls.Add(status); body.Controls.Add(activity, 0, 1);
+            activity.Controls.Add(status); body.Controls.Add(activity, 0, 2);
             bool elevated = ElevationRestart.IsElevated();
             var access = Table(2, 1);
             access.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -328,9 +358,9 @@ namespace DisplayWeave
             restart.Enabled = !elevated;
             restart.Margin = new Padding(12, 24, 0, 26);
             access.Controls.Add(restart, 1, 0);
-            body.Controls.Add(access, 0, 2);
-            body.Controls.Add(Introduction("Keyboard shortcuts", "Ctrl + Alt + Shift + 1…9     Force the active app into a region\nCtrl + Alt + Shift + 0          Release the active app\nCtrl + Alt + Shift + Backspace     Pause all handling"), 0, 3);
-            body.Controls.Add(Introduction("Keep it in the tray", "X hides this window and keeps region handling running.\nDouble-click the tray icon or launch DisplayWeave again to reopen settings.\nExit DisplayWeave stops handling, restores controlled windows, and quits."), 0, 4);
+            body.Controls.Add(access, 0, 3);
+            body.Controls.Add(Introduction("Keyboard shortcuts", "Ctrl + Alt + Shift + 1…9     Force the active app into a region\nCtrl + Alt + Shift + 0          Release the active app\nCtrl + Alt + Shift + Backspace     Pause all handling"), 0, 4);
+            body.Controls.Add(Introduction("Keep it in the tray", "X hides this window and keeps region handling running.\nDouble-click the tray icon or launch DisplayWeave again to reopen settings.\nExit DisplayWeave stops handling, restores controlled windows, and quits."), 0, 5);
             var startup = Table(1, 2);
             startup.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
             startup.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -359,13 +389,13 @@ namespace DisplayWeave
             };
             startup.Controls.Add(startWithWindows, 0, 0);
             startup.Controls.Add(startupHelp, 0, 1);
-            body.Controls.Add(startup, 0, 5);
+            body.Controls.Add(startup, 0, 6);
             var bottom = Table(2, 1);
             bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
             bottom.Controls.Add(Caption("Editing pauses handling. Save layout applies changes and resumes it."), 0, 0);
             bottom.Controls.Add(Button("Exit DisplayWeave", ExitApplication), 1, 0);
-            body.Controls.Add(bottom, 0, 6);
+            body.Controls.Add(bottom, 0, 7);
         }
 
         private void SyncRuleRegion()
@@ -411,7 +441,7 @@ namespace DisplayWeave
             var panel = Table(1, 2);
             panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
             panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            panel.Controls.Add(new Label { Text = title, Dock = DockStyle.Fill, Font = new Font("Segoe UI", 14F, FontStyle.Bold), ForeColor = Color.FromArgb(25, 38, 65) }, 0, 0);
+            panel.Controls.Add(new Label { Text = title, UseMnemonic = false, Dock = DockStyle.Fill, Font = new Font("Segoe UI", 14F, FontStyle.Bold), ForeColor = Color.FromArgb(25, 38, 65) }, 0, 0);
             panel.Controls.Add(new Label { Text = description, Dock = DockStyle.Fill, ForeColor = Color.FromArgb(75, 89, 110) }, 0, 1);
             return panel;
         }

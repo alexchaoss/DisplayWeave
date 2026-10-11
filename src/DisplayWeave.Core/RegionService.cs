@@ -27,6 +27,13 @@ namespace DisplayWeave
             }
             string warning;
             Rules = ApplicationRules.Load(RulesPath, out warning);
+            if (warning.Length > 0)
+            {
+                // The next save replaces rules.xml; keep the unreadable copy so its rules can still be recovered.
+                try { File.Copy(RulesPath, RulesPath + ".unreadable.bak", true); warning += " The unreadable file was copied to rules.xml.unreadable.bak."; }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
             LoadWarning = warning;
             Engine = new FullscreenController { AutomaticExecutableFilter = automaticExecutableFilter };
         }

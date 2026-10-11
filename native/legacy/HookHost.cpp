@@ -449,18 +449,15 @@ static bool SameAbsolutePath(const wchar_t* first, const wchar_t* second) {
 
 #include "BootstrapLoader.h"
 
-enum HandoffPolicy {
-    HandoffFresh, HandoffReuse, HandoffMultipleHooks, HandoffInvalidMapping,
-    HandoffUnregisteredWindow, HandoffUnreadyWorker
-};
+enum HandoffPolicy { HandoffFresh, HandoffReuse, HandoffInvalidMapping, HandoffFailedWorker };
 
-static HandoffPolicy DecideHandoff(size_t residentCount, bool validMapping,
-    bool registeredWindow, bool acknowledgedWorker) {
-    if (residentCount == 0) return HandoffFresh;
-    if (residentCount != 1) return HandoffMultipleHooks;
+// A resident worker keeps this build's control mapping open for the target's lifetime, so
+// the mapping, not a module named RegionHook.dll, identifies it. A RegionHook.dll from an
+// earlier product name or protocol stays pass-through beside a freshly loaded hook.
+static HandoffPolicy DecideHandoff(bool residentMapping, bool validMapping, bool liveWorker) {
+    if (!residentMapping) return HandoffFresh;
     if (!validMapping) return HandoffInvalidMapping;
-    if (!registeredWindow) return HandoffUnregisteredWindow;
-    return acknowledgedWorker ? HandoffReuse : HandoffUnreadyWorker;
+    return liveWorker ? HandoffReuse : HandoffFailedWorker;
 }
 
 static bool DeadControllerResult(bool opened, DWORD openError, DWORD waitResult) {
@@ -479,13 +476,13 @@ static int PolicySelfTest() {
         {L"TextInputHost.exe", true}, {L"InputApp.exe", true},
         {L"RegionDxgiProbe.exe", false}, {L"ChatGPT.exe", false},
         {L"C:\\Apps\\explorer.exe.backup", false}, {L"myexplorer.exe", false},
-        {L"C:\\explorer.exe\\notepad.exe", false}, {NULL, false}, {L"", false}
+        {L"C:\\explorer.exe\\editor.exe", false}, {NULL, false}, {L"", false}
     };
     const TextCase classCases[] = {
         {L"Progman", true}, {L"workerw", true}, {L"Shell_TrayWnd", true},
         {L"Shell_SecondaryTrayWnd", true}, {L"SHELLDLL_DefView", true},
         {L"CabinetWClass", true}, {L"ExploreWClass", true},
-        {L"Chrome_WidgetWin_1", false}, {L"RegionDxgiProbe", false},
+        {L"Editor_MainWindow", false}, {L"RegionDxgiProbe", false},
         {L"SysListView32", false}, {L"Windows.UI.Core.CoreWindow", false},
         {L"Shell_TrayWndExtra", false}, {NULL, false}, {L"", false}
     };
@@ -494,10 +491,10 @@ static int PolicySelfTest() {
         {L"Battle.net.exe", true}, {L"battle.NET LAUNCHER.exe", true}, {L"BATTLE.NET Helper.exe", true},
         {L"C:\\Apps\\Battle.net.exe", true}, {L"C:/Apps/Battle.net Launcher.exe", true},
         {L"D:\\Tools\\Battle.net Helper.exe", true},
-        {L"Diablo IV.exe", false}, {L"Diablo III64.exe", false}, {L"Wow.exe", false},
-        {L"Overwatch.exe", false}, {L"Agent.exe", false}, {L"MyBattle.net.exe", false},
+        {L"Game.exe", false}, {L"Game64.exe", false}, {L"Client.exe", false},
+        {L"Shooter.exe", false}, {L"Agent.exe", false}, {L"MyBattle.net.exe", false},
         {L"Battle.net.exe.backup", false}, {L"Battle.netGame.exe", false},
-        {L"C:\\Battle.net.exe\\Diablo IV.exe", false}, {L"C:/Games/Battle.net/Diablo IV.exe", false},
+        {L"C:\\Battle.net.exe\\Game.exe", false}, {L"C:/Games/Battle.net/Game.exe", false},
         {L"Battle.net", false}, {L"", false}, {NULL, false}
     };
     for (size_t i = 0; i < sizeof(launcherCases) / sizeof(launcherCases[0]); ++i) {
@@ -553,17 +550,15 @@ static int PolicySelfTest() {
         if (SameAbsolutePath(paths[i].first, paths[i].second) != paths[i].same)
             return Error("Resident hook path policy self-test failed", ERROR_INVALID_DATA);
     }
-    struct HandoffCase { size_t count; bool mapping, window, worker; HandoffPolicy expected; };
+    struct HandoffCase { bool resident, mapping, worker; HandoffPolicy expected; };
     const HandoffCase handoffs[] = {
-        {0, false, false, false, HandoffFresh}, {0, true, true, true, HandoffFresh},
-        {1, true, true, true, HandoffReuse}, {2, true, true, true, HandoffMultipleHooks},
-        {1, false, true, true, HandoffInvalidMapping}, {1, true, false, true, HandoffUnregisteredWindow},
-        {1, true, true, false, HandoffUnreadyWorker}, {1, false, false, false, HandoffInvalidMapping}
+        {false, false, false, HandoffFresh}, {false, true, true, HandoffFresh},
+        {true, true, true, HandoffReuse}, {true, false, true, HandoffInvalidMapping},
+        {true, true, false, HandoffFailedWorker}, {true, false, false, HandoffInvalidMapping}
     };
     for (size_t i = 0; i < sizeof(handoffs) / sizeof(handoffs[0]); ++i) {
         ++count;
-        if (DecideHandoff(handoffs[i].count, handoffs[i].mapping, handoffs[i].window,
-            handoffs[i].worker) != handoffs[i].expected)
+        if (DecideHandoff(handoffs[i].resident, handoffs[i].mapping, handoffs[i].worker) != handoffs[i].expected)
             return Error("Resident handoff policy self-test failed", ERROR_INVALID_DATA);
     }
     struct ControllerCase { bool opened; DWORD error, wait; bool dead; };
@@ -875,63 +870,6 @@ static bool GetSiblingHookPath(std::wstring& result, DWORD& error) {
     return true;
 }
 
-static bool CheckResidentHookOnce(DWORD pid, std::vector<std::wstring>& residentPaths, DWORD& error) {
-    residentPaths.clear();
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
-    if (snapshot == INVALID_HANDLE_VALUE) {
-        error = GetLastError(); if (!error) error = ERROR_GEN_FAILURE;
-        return false;
-    }
-    MODULEENTRY32W entry = {};
-    entry.dwSize = sizeof(entry);
-    if (!Module32FirstW(snapshot, &entry)) {
-        error = GetLastError(); if (!error) error = ERROR_GEN_FAILURE;
-        CloseHandle(snapshot);
-        return false;
-    }
-    bool ok = false;
-    for (;;) {
-        // A truncated module name cannot establish that no hook DLL is present.
-        if (!wmemchr(entry.szModule, L'\0', sizeof(entry.szModule) / sizeof(entry.szModule[0]))) {
-            error = ERROR_INSUFFICIENT_BUFFER;
-            break;
-        }
-        if (_wcsicmp(entry.szModule, L"RegionHook.dll") == 0) {
-            size_t capacity = sizeof(entry.szExePath) / sizeof(entry.szExePath[0]);
-            if (!wmemchr(entry.szExePath, L'\0', capacity) || wcslen(entry.szExePath) >= capacity - 1) {
-                error = ERROR_INSUFFICIENT_BUFFER;
-                break;
-            }
-            std::wstring residentPath;
-            if (!NormalizeAbsolutePath(entry.szExePath, residentPath)) {
-                error = ERROR_INVALID_NAME;
-                break;
-            }
-            residentPaths.push_back(residentPath);
-        }
-        entry.dwSize = sizeof(entry);
-        if (!Module32NextW(snapshot, &entry)) {
-            error = GetLastError();
-            if (error == ERROR_NO_MORE_FILES) { error = ERROR_SUCCESS; ok = true; }
-            else if (!error) error = ERROR_GEN_FAILURE;
-            break;
-        }
-    }
-    CloseHandle(snapshot);
-    return ok;
-}
-
-static bool FindResidentHooks(DWORD pid, std::vector<std::wstring>& residentPaths,
-    const char*& reason, DWORD& error) {
-    for (int attempt = 0; attempt < 3; ++attempt) {
-        if (CheckResidentHookOnce(pid, residentPaths, error)) return true;
-        if (error != ERROR_BAD_LENGTH) break;
-        if (attempt < 2) Sleep(10);
-    }
-    reason = "Cannot reliably inspect the selected application's loaded DisplayWeave hooks; attachment was not attempted";
-    return false;
-}
-
 static bool ExistingSubclass(HWND hwnd) {
     return GetPropW(hwnd, L"DisplayWeave.Subclass.v2") == reinterpret_cast<HANDLE>(static_cast<INT_PTR>(1)) &&
         GetPropW(hwnd, L"DisplayWeave.OriginalProcedure.v2") != NULL;
@@ -1236,33 +1174,20 @@ int wmain(int argc, wchar_t** argv) {
         CloseHandle(targetProcess);
         return Error("Cannot resolve the fullscreen helper's absolute DLL path", preflightError);
     }
-    std::vector<std::wstring> residentPaths;
-    if (!FindResidentHooks(pid, residentPaths, preflightReason, preflightError)) {
-        CloseHandle(targetProcess);
-        return Error(preflightReason, preflightError);
-    }
-    if (residentPaths.size() > 1) {
-        CloseHandle(targetProcess);
-        return Error("Restart the target application; more than one DisplayWeave hook is already loaded", ERROR_REVISION_MISMATCH);
-    }
-    bool reuse = residentPaths.size() == 1;
-
     wchar_t mappingName[80];
     swprintf(mappingName, 80, L"Local\\DisplayWeave_%lu", pid);
     SetLastError(ERROR_SUCCESS);
-    HANDLE mapping = reuse ? OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, mappingName) :
-        CreateFileMappingW(INVALID_HANDLE_VALUE, ipcAttributes, PAGE_READWRITE, 0, sizeof(RegionProtocol), mappingName);
+    HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, ipcAttributes, PAGE_READWRITE, 0, sizeof(RegionProtocol), mappingName);
     if (!mapping) {
         DWORD error = GetLastError(); CloseHandle(targetProcess);
-        return Error(reuse ? "Restart the target application; its resident DisplayWeave hook has no accessible control mapping" :
-            "Cannot create application control mapping", reuse ? ERROR_REVISION_MISMATCH : error);
+        return Error("Cannot create application control mapping", error);
     }
-    bool alreadyExists = reuse || GetLastError() == ERROR_ALREADY_EXISTS;
+    bool reuse = GetLastError() == ERROR_ALREADY_EXISTS;
     shared = static_cast<RegionProtocol*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(RegionProtocol)));
     if (!shared) {
         DWORD error = GetLastError();
         bool oldVersion = false;
-        if (alreadyExists) {
+        if (reuse) {
             const DWORD* header = static_cast<const DWORD*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 12));
             if (header) {
                 oldVersion = header[0] == RS_PROTOCOL_MAGIC &&
@@ -1274,31 +1199,30 @@ int wmain(int argc, wchar_t** argv) {
         return Error(oldVersion ? "Restart the target application to use this DisplayWeave version" :
             "Cannot map application controls", oldVersion ? ERROR_REVISION_MISMATCH : error);
     }
-    if (alreadyExists && (shared->magic != RS_PROTOCOL_MAGIC ||
+    if (reuse && (shared->magic != RS_PROTOCOL_MAGIC ||
         shared->version != RS_PROTOCOL_VERSION || shared->size != sizeof(RegionProtocol) || shared->targetPid != pid)) {
         UnmapViewOfFile(shared); CloseHandle(mapping); CloseHandle(targetProcess);
         return Error("Restart the target application to use this DisplayWeave version", ERROR_REVISION_MISMATCH);
     }
-    if (alreadyExists && !PreviousControllerExited(shared->controllerPid, preflightError)) {
+    if (reuse && !PreviousControllerExited(shared->controllerPid, preflightError)) {
         UnmapViewOfFile(shared); CloseHandle(mapping); CloseHandle(targetProcess);
         return Error(preflightError == ERROR_ALREADY_EXISTS ? "This process already has a live DisplayWeave controller" :
             "Cannot verify that the previous DisplayWeave controller has exited; attachment was not attempted", preflightError);
     }
     RegionSnapshot previous = {};
-    HandoffPolicy handoff = DecideHandoff(residentPaths.size(), reuse && RS_ReadSnapshot(shared, previous),
-        reuse && ExistingSubclass(hwnd), reuse && shared->hookReady == 1 &&
-        static_cast<DWORD>(shared->acknowledgedPid) == pid &&
+    // The worker acknowledges every 100 ms even after its previous window closed, and
+    // subclasses whichever window it is given; only one whose hooks failed (-1) stopped.
+    HandoffPolicy handoff = DecideHandoff(reuse, reuse && RS_ReadSnapshot(shared, previous),
+        reuse && shared->hookReady >= 0 && static_cast<DWORD>(shared->acknowledgedPid) == pid &&
         ReadyCapabilities(shared->capabilities));
     if (reuse && handoff != HandoffReuse) {
-        const char* reason = handoff == HandoffUnregisteredWindow ?
-            "Restart the target application to control this window; its resident hook has not registered this window" :
-            handoff == HandoffUnreadyWorker ?
-            "Restart the target application; its resident DisplayWeave worker has not acknowledged compatible hooks" :
+        const char* reason = handoff == HandoffFailedWorker ?
+            "Restart the target application; its resident DisplayWeave worker could not install its hooks" :
             "Restart the target application; its resident DisplayWeave control mapping is incomplete or incompatible";
         UnmapViewOfFile(shared); CloseHandle(mapping); CloseHandle(targetProcess);
         return Error(reason, ERROR_REVISION_MISMATCH);
     }
-    if (!SameWindowIdentity(hwnd, pid, threadId) || (reuse && !ExistingSubclass(hwnd))) {
+    if (!SameWindowIdentity(hwnd, pid, threadId)) {
         UnmapViewOfFile(shared); CloseHandle(mapping); CloseHandle(targetProcess);
         return Error("The selected window changed before attachment; select it again", ERROR_INVALID_WINDOW_HANDLE);
     }
@@ -1315,7 +1239,7 @@ int wmain(int argc, wchar_t** argv) {
     if (layoutMapping && !layoutShared) layoutError = GetLastError();
     RegionLayoutSnapshot priorLayout = {};
     RegionSnapshot priorControl = {};
-    if (layoutShared && layoutExists && (!alreadyExists || !RS_ReadSnapshot(shared, priorControl) ||
+    if (layoutShared && layoutExists && (!reuse || !RS_ReadSnapshot(shared, priorControl) ||
         !RS_ReadLayout(layoutShared, priorControl, priorLayout) || priorControl.targetPid != pid ||
         priorControl.controllerPid != shared->controllerPid)) layoutError = ERROR_REVISION_MISMATCH;
     if (layoutError || !layoutShared) {
