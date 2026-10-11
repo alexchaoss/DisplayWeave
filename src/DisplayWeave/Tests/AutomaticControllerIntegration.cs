@@ -26,7 +26,6 @@ namespace DisplayWeave
             log.AppendLine("Manual Attach calls: none. App rules: none. Saved settings: unchanged.");
             Process probe = null;
             FullscreenController controller = null;
-            WindowManager windows = null;
             ApplicationContext loop = null;
             System.Windows.Forms.Timer timer = null;
             int result = 1;
@@ -44,7 +43,6 @@ namespace DisplayWeave
                 if (!FullscreenController.TryResolveLayoutInArea(layout.Zones, selected.Bounds, out regions))
                     throw new InvalidOperationException("The monitor cannot contain three fixture regions.");
                 ApplicationRules emptyRules = new ApplicationRules();
-                windows = new WindowManager();
                 controller = new FullscreenController { AutomaticExecutableFilter = fixture };
                 loop = new ApplicationContext();
                 timer = new System.Windows.Forms.Timer { Interval = 50 };
@@ -80,7 +78,7 @@ namespace DisplayWeave
                         if (GetWindowThreadProcessId(fixtureWindow, out currentPid) == 0 || currentPid != fixturePid)
                             throw new InvalidOperationException("The fixture window identity changed.");
                         List<WindowCandidate> candidates = new List<WindowCandidate>();
-                        foreach (WindowCandidate candidate in windows.ListWindows())
+                        foreach (WindowCandidate candidate in WindowManager.ListWindows())
                         {
                             if (candidate.Handle != fixtureWindow) continue;
                             ApplicationIdentity identity;
@@ -159,7 +157,6 @@ namespace DisplayWeave
                     catch (Exception ex) { result = 1; log.AppendLine("Fixture cleanup failed: " + ex.Message); }
                     probe.Dispose();
                 }
-                if (windows != null) windows.Dispose();
                 if (loop != null) loop.Dispose();
                 log.AppendLine(result == 0 ? "PASS automatic discovery, all-region monitor APIs, maximize, borderless fullscreen, windowed rendering and Pause restoration."
                     : "FAIL automatic virtual monitor integration; inspect fixture report and controller log.");
@@ -274,7 +271,6 @@ namespace DisplayWeave
             log.AppendLine("Manual Attach calls: none. Saved/manual rules: none. Settings files: not modified.");
             Process probe = null;
             FullscreenController controller = null;
-            WindowManager windows = null;
             ApplicationContext loop = null;
             System.Windows.Forms.Timer timer = null;
             int result = 1;
@@ -286,7 +282,6 @@ namespace DisplayWeave
                 WindowManager.EnableDpiAwareness();
                 LayoutSettings layout = CreateFixtureLayout();
                 ApplicationRules emptyRules = new ApplicationRules();
-                windows = new WindowManager();
                 controller = new FullscreenController { AutomaticExecutableFilter = fixture };
                 loop = new ApplicationContext();
                 timer = new System.Windows.Forms.Timer { Interval = 50 };
@@ -330,7 +325,7 @@ namespace DisplayWeave
                             log.AppendLine("Fixture initialized; beginning automatic discovery with an empty rule set.");
                         }
                         List<WindowCandidate> fixtureWindows = new List<WindowCandidate>();
-                        foreach (WindowCandidate candidate in windows.ListWindows())
+                        foreach (WindowCandidate candidate in WindowManager.ListWindows())
                         {
                             uint candidatePid;
                             GetWindowThreadProcessId(candidate.Handle, out candidatePid);
@@ -392,7 +387,6 @@ namespace DisplayWeave
                     catch (System.ComponentModel.Win32Exception ex) { log.AppendLine("Fixture cleanup: " + ex.Message); result = 1; }
                     probe.Dispose();
                 }
-                if (windows != null) windows.Dispose();
                 if (loop != null) loop.Dispose();
                 log.AppendLine(result == 0 ? "PASS automatic discovery, region selection, fullscreen/maximize, and Pause restoration."
                     : "FAIL managed automatic controller integration; inspect fixture JSON and controller messages.");

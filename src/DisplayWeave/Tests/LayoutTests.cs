@@ -364,6 +364,22 @@ namespace DisplayWeave
                     settings.Save(path);
                     AssertDefaults(LayoutSettings.Load(path));
                 });
+                test("Monitor lookup matches WinForms Screen without a UI reference", delegate
+                {
+                    System.Windows.Forms.Screen[] screens = System.Windows.Forms.Screen.AllScreens;
+                    List<DisplayMonitor> monitors = DisplayMonitor.All();
+                    Assert(monitors.Count == screens.Length, "Monitor count differs.");
+                    for (int i = 0; i < screens.Length; i++)
+                    {
+                        Assert(monitors[i].DeviceName == screens[i].DeviceName && monitors[i].Bounds == screens[i].Bounds &&
+                            monitors[i].WorkingArea == screens[i].WorkingArea, "Monitor " + screens[i].DeviceName + " differs.");
+                        Assert(DisplayMonitor.Find(screens[i].DeviceName.ToLowerInvariant()).Bounds == screens[i].Bounds, "Find is not case-insensitive.");
+                        Assert(DisplayMonitor.FromRectangle(screens[i].Bounds).DeviceName == screens[i].DeviceName, "Rectangle lookup differs.");
+                    }
+                    Assert(DisplayMonitor.Find("no such monitor") == null, "An unknown monitor was found.");
+                    Assert(DisplayMonitor.FromWindow(IntPtr.Zero).DeviceName == System.Windows.Forms.Screen.FromHandle(IntPtr.Zero).DeviceName,
+                        "Window lookup differs.");
+                });
             }
             finally
             {

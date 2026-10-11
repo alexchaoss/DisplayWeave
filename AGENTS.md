@@ -1,6 +1,6 @@
 # DisplayWeave agent guide
 
-DisplayWeave has two separate implementations: the 0.5.x window/monitor-hook app (`src/DisplayWeave`, `native/legacy`) and the experimental, non-injecting virtual-display projection prototype (`src/DisplayWeave.Prototype`, `native/projection`), released separately as DisplayWeave Prototype 0.1.0-preview. **Building or installing one never installs or updates the other.**
+DisplayWeave has two separate implementations: the 0.5.x window/monitor-hook app (`src/DisplayWeave` over the `src/DisplayWeave.Core` engine, `native/legacy`) and the experimental, non-injecting virtual-display projection prototype (`src/DisplayWeave.Prototype`, `native/projection`), released separately as DisplayWeave Prototype 0.1.0-preview. **Building or installing one never installs or updates the other.**
 
 ## Read first
 

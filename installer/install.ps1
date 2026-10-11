@@ -219,7 +219,7 @@ function Read-CandidateVersion([string]$Directory) {
         $manifest.version -isnot [string] -or $manifest.version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z.-]+)?$') {
         throw 'Release manifest must contain a valid version such as 0.4.0-preview.'
     }
-    foreach ($required in @('DisplayWeave.exe', 'native-v2-x64\RegionHookHost.exe', 'native-v2-x64\RegionHook.dll',
+    foreach ($required in @('DisplayWeave.exe', 'DisplayWeave.Core.dll', 'native-v2-x64\RegionHookHost.exe', 'native-v2-x64\RegionHook.dll',
         'native-v2-x86\RegionHookHost.exe', 'native-v2-x86\RegionHook.dll')) {
         $file = Join-Path $Directory $required
         Assert-PlainPath $file $false

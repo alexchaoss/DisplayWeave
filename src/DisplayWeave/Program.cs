@@ -69,17 +69,15 @@ namespace DisplayWeave
                 WindowManager.EnableDpiAwareness();
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
-                using (var manager = new WindowManager())
-                using (var form = new MainForm(manager, options.AutomaticExecutableFilter, options.DataDirectory, options.StartMinimized))
+                using (var form = new MainForm(options.AutomaticExecutableFilter, options.DataDirectory, options.StartMinimized))
                 {
                     Application.ThreadException += delegate(object sender, ThreadExceptionEventArgs e)
                     {
-                        manager.ReleaseAll();
                         form.PauseFullscreenRules();
                         MessageBox.Show("Windows have been released after an error.\n\n" + e.Exception.Message, "DisplayWeave");
                     };
                     try { Application.Run(form); }
-                    finally { form.PauseFullscreenRules(); manager.ReleaseAll(); }
+                    finally { form.PauseFullscreenRules(); }
                 }
             }
             return 0;

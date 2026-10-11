@@ -28,6 +28,7 @@ $NativeDirectory = [IO.Path]::GetFullPath($NativeDirectory)
 # from entering an archive. Validate every input before creating a staging area.
 $files = @(
     @{ Source = $ManagedExecutable; Destination = 'DisplayWeave.exe' },
+    @{ Source = (Join-Path (Split-Path -Parent $ManagedExecutable) 'DisplayWeave.Core.dll'); Destination = 'DisplayWeave.Core.dll' },
     @{ Source = (Join-Path $NativeDirectory 'MinHook-LICENSE.txt'); Destination = 'MinHook-LICENSE.txt' }
 )
 foreach ($architecture in @('x64', 'x86')) {

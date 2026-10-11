@@ -480,7 +480,7 @@ namespace DisplayWeave
             foreach (uint pid in remove) sessions.Remove(pid);
             if (Paused || !validLayout || windows == null) return;
             ReturnUnruledMaximized(rules, layout);
-            System.Windows.Forms.Screen selected = FindScreen(layout.MonitorDevice);
+            DisplayMonitor selected = DisplayMonitor.Find(layout.MonitorDevice);
             Rectangle area = selected == null ? Rectangle.Empty : (layout.UseWorkArea ? selected.WorkingArea : selected.Bounds);
             List<WindowCandidate> candidates = new List<WindowCandidate>(windows);
             IntPtr foreground = GetForegroundWindow();
@@ -533,8 +533,8 @@ namespace DisplayWeave
                     out restoredBounds, out expanded, out minimized)) continue;
                 if (minimized) continue;
                 // A window spanning monitors belongs to the monitor with the greatest window overlap.
-                System.Windows.Forms.Screen currentScreen = System.Windows.Forms.Screen.FromRectangle(currentBounds);
-                if (!String.Equals(currentScreen.DeviceName, selected.DeviceName, StringComparison.OrdinalIgnoreCase))
+                DisplayMonitor currentMonitor = DisplayMonitor.FromRectangle(currentBounds);
+                if (currentMonitor == null || !String.Equals(currentMonitor.DeviceName, selected.DeviceName, StringComparison.OrdinalIgnoreCase))
                 {
                     automaticPolicy.Forget(identity.Key);
                     Disable(existing);
@@ -644,8 +644,9 @@ namespace DisplayWeave
         private static void ReturnToMonitor(IntPtr handle)
         {
             Rectangle current, wanted;
-            if (IsIconic(handle) || !IsZoomed(handle) ||
-                !TryMaximizedBounds(handle, System.Windows.Forms.Screen.FromHandle(handle).WorkingArea, out current, out wanted) || current == wanted) return;
+            DisplayMonitor monitor = DisplayMonitor.FromWindow(handle);
+            if (monitor == null || IsIconic(handle) || !IsZoomed(handle) ||
+                !TryMaximizedBounds(handle, monitor.WorkingArea, out current, out wanted) || current == wanted) return;
             SetWindowPos(handle, IntPtr.Zero, wanted.X, wanted.Y, wanted.Width, wanted.Height, SwpNoZOrder | SwpNoActivate | SwpNoOwnerZOrder | SwpAsyncWindowPos);
         }
 
@@ -720,13 +721,6 @@ namespace DisplayWeave
             return force;
         }
 
-        private static System.Windows.Forms.Screen FindScreen(string device)
-        {
-            foreach (System.Windows.Forms.Screen screen in System.Windows.Forms.Screen.AllScreens)
-                if (String.Equals(screen.DeviceName, device, StringComparison.OrdinalIgnoreCase)) return screen;
-            return null;
-        }
-
         private static bool TryReadWindowState(IntPtr handle, Rectangle monitor, Session session,
             out Rectangle current, out Rectangle restored, out bool expanded, out bool minimized)
         {
@@ -738,13 +732,13 @@ namespace DisplayWeave
             current = Rectangle.FromLTRB(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom);
             WindowPlacement placement = new WindowPlacement();
             placement.Length = (uint)Marshal.SizeOf(typeof(WindowPlacement));
+            DisplayMonitor windowMonitor;
             if (GetWindowPlacement(handle, ref placement) && placement.NormalPosition.Right > placement.NormalPosition.Left &&
-                placement.NormalPosition.Bottom > placement.NormalPosition.Top)
+                placement.NormalPosition.Bottom > placement.NormalPosition.Top && (windowMonitor = DisplayMonitor.FromWindow(handle)) != null)
             {
-                System.Windows.Forms.Screen windowScreen = System.Windows.Forms.Screen.FromHandle(handle);
                 // WINDOWPLACEMENT uses workspace coordinates for ordinary top-level windows.
-                int offsetX = windowScreen.WorkingArea.Left - windowScreen.Bounds.Left;
-                int offsetY = windowScreen.WorkingArea.Top - windowScreen.Bounds.Top;
+                int offsetX = windowMonitor.WorkingArea.Left - windowMonitor.Bounds.Left;
+                int offsetY = windowMonitor.WorkingArea.Top - windowMonitor.Bounds.Top;
                 restored = new Rectangle(placement.NormalPosition.Left + offsetX, placement.NormalPosition.Top + offsetY,
                     placement.NormalPosition.Right - placement.NormalPosition.Left,
                     placement.NormalPosition.Bottom - placement.NormalPosition.Top);
@@ -775,7 +769,7 @@ namespace DisplayWeave
         {
             regions = null;
             if (layout == null) return false;
-            System.Windows.Forms.Screen selected = FindScreen(layout.MonitorDevice);
+            DisplayMonitor selected = DisplayMonitor.Find(layout.MonitorDevice);
             return selected != null && TryResolveLayoutInArea(layout.Zones,
                 layout.UseWorkArea ? selected.WorkingArea : selected.Bounds, out regions);
         }
@@ -822,9 +816,7 @@ namespace DisplayWeave
             region = Rectangle.Empty;
             if (rule == null || layout == null) return false;
             if (!String.Equals(rule.MonitorDevice, layout.MonitorDevice, StringComparison.OrdinalIgnoreCase)) return false;
-            System.Windows.Forms.Screen selected = null;
-            foreach (System.Windows.Forms.Screen screen in System.Windows.Forms.Screen.AllScreens)
-                if (String.Equals(screen.DeviceName, rule.MonitorDevice, StringComparison.OrdinalIgnoreCase)) selected = screen;
+            DisplayMonitor selected = DisplayMonitor.Find(rule.MonitorDevice);
             if (selected == null) return false;
             return TryResolveRegionInArea(rule.ZoneId, layout.Zones,
                 layout.UseWorkArea ? selected.WorkingArea : selected.Bounds, out region);

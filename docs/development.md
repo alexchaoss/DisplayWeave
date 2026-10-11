@@ -6,8 +6,9 @@ Start with [AGENTS.md](../AGENTS.md) and the [dated handoff](agent-handoff.md). 
 
 | Folder | Contents |
 | --- | --- |
-| `src/DisplayWeave` | Legacy WinForms app (`version.txt`, `release.json`, `app.manifest`); managed checks under `Tests/`. |
-| `src/DisplayWeave.Prototype` | Separate projection prototype: UI, session worker, Win32 helpers and pure self-tests; its own `version.txt`. Reuses only `src/DisplayWeave/Layout.cs`. |
+| `src/DisplayWeave.Core` | Legacy region engine, `DisplayWeave.Core.dll`: layout, rules, window listing, controller and the `RegionService` facade. Compiled without any UI reference. |
+| `src/DisplayWeave` | Legacy WinForms app over the engine (`version.txt`, `release.json`, `app.manifest`); managed checks under `Tests/`. |
+| `src/DisplayWeave.Prototype` | Separate projection prototype: UI, session worker, Win32 helpers and pure self-tests; its own `version.txt`. Reuses only `src/DisplayWeave.Core/Layout.cs`. |
 | `native/legacy` | Legacy hook host, RegionHook DLL, fullscreen probe and protocols; loader fixtures under `tests/`. |
 | `native/projection` | Presenter, input session, display lease, probe, layout/protocol models and their pure tests. |
 | `scripts` | `fetch-tools`, `build`, `build-native`, `build-projection`, `build-prototype`, `package`, `package-prototype`. |
@@ -22,9 +23,9 @@ Scripts locate the repository from their parent folder, so run them from anywher
 | Concern | Files and existing behavior |
 | --- | --- |
 | Legacy entry and lifecycle | `src/DisplayWeave/Program.cs`, `AppOptions.cs`, `ElevationRestart.cs`, `StartupRegistration.cs`, `Updater.cs`: single instance, settings location, explicit elevation, sign-in startup and release updates through `gh`. |
-| Legacy interface | `MainForm.cs`, `MainForm.Interface.cs`, `RulerCanvas.cs`: tabs, ruler editor, app picker, status and tray. Closing X hides to tray; Exit stops handling. |
-| Layout and rules | `Layout.cs`, `RulerLayout.cs`, `ApplicationRules.cs`, `AutomaticRegionPolicy.cs`: non-overlapping grid, saved identities, rule precedence and automatic overlap selection. |
-| Window/controller ownership | `WindowManager.cs` snapshots/restores eligible windows; `FullscreenController.cs` manages the legacy native component. Do not pull the latter into a non-injecting prototype. |
+| Legacy interface | `MainForm.cs`, `MainForm.Interface.cs`, `RulerCanvas.cs`: tabs, ruler editor, app picker, status and tray. Closing X hides to tray; Exit stops handling. Actions call `RegionService`; keep business logic out of the form. |
+| Layout and rules | `src/DisplayWeave.Core`: `Layout.cs`, `RulerLayout.cs`, `ApplicationRules.cs`, `AutomaticRegionPolicy.cs`: non-overlapping grid, saved identities, rule precedence and automatic overlap selection. |
+| Window/controller ownership | `WindowManager.cs` lists eligible windows; `DisplayMonitor.cs` reads monitors; `FullscreenController.cs` manages the legacy native component; `RegionService.cs` loads/saves settings and exposes the app's actions to any host. Do not pull the controller into a non-injecting prototype. |
 | Legacy native code | `native/legacy/HookHost.cpp`, `RegionHook.cpp`, `RegionProtocol.h`, `RegionLayoutProtocol.h`, `VirtualMonitorModel.h`: delivery, resident-hook reconnection and USER32 monitor/window compatibility. `ShellPolicy.h` and `CompatibilityPolicy.h` contain exclusions. |
 | Prototype app | `src/DisplayWeave.Prototype/PrototypeApp.cs` (UI, entry modes `--worker`, `--self-test`), `PrototypeSession.cs` (request/status model, policy, worker, recovery), `PrototypeNative.cs` (window list, snapshot/move/restore, release events), `PrototypeTests.cs`. |
 | Projection rendering | `native/projection/RegionPresenter.cpp`, `ProjectionCursor.h`, `ProjectionPolicy.h`: DDA/D3D11, crop/aspect fit, cursor shader, CLI and measurements. |

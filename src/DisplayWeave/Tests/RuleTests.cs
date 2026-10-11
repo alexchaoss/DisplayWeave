@@ -515,6 +515,45 @@ namespace DisplayWeave
                     history.ClearTarget(first);
                     Assert(history.Latest == String.Empty && history.Count == 0, "Destroyed target did not clear its warning.");
                 });
+                test("RegionService saves, reloads and reports problems without a UI", delegate
+                {
+                    string data = Path.Combine(temporary, "service");
+                    string blocker = Path.Combine(temporary, "service-blocker");
+                    Directory.CreateDirectory(data);
+                    File.WriteAllText(blocker, "");
+                    try
+                    {
+                        int saves = 0;
+                        using (RegionService service = new RegionService(data))
+                        {
+                            service.Saved += delegate { saves++; };
+                            Assert(service.LoadWarning == "" && service.Rules.Rules.Count == 0 && service.Layout.Zones.Count > 0 &&
+                                service.Layout.MonitorDevice == System.Windows.Forms.Screen.PrimaryScreen.DeviceName, "Defaults did not load on the primary monitor.");
+                            Assert(service.Assign(IntPtr.Zero, 99, ApplicationAction.ForceFullscreen) == "There is no region for that shortcut.",
+                                "A missing region was not reported.");
+                            Assert(!String.IsNullOrEmpty(service.Assign(IntPtr.Zero, 0, ApplicationAction.ForceFullscreen)), "An invalid window was not reported.");
+                            Assert(service.Rules.Rules.Count == 0 && saves == 0 && !File.Exists(service.RulesPath), "A rejected action saved something.");
+                            service.Save();
+                            Assert(saves == 1 && File.Exists(service.LayoutPath) && File.Exists(service.RulesPath), "Save did not write both files.");
+                        }
+                        using (RegionService reloaded = new RegionService(data))
+                            Assert(reloaded.LoadWarning == "", "Saved files did not reload cleanly.");
+                        using (RegionService blocked = new RegionService(blocker))
+                        {
+                            bool raised = false;
+                            blocked.Saved += delegate { raised = true; };
+                            try { blocked.Save(); throw new InvalidOperationException("Saving under a file path did not fail."); }
+                            catch (IOException) { }
+                            Assert(!raised, "Saved was raised for a failed save.");
+                        }
+                    }
+                    finally
+                    {
+                        foreach (string path in Directory.GetFiles(data)) File.Delete(path);
+                        Directory.Delete(data);
+                        File.Delete(blocker);
+                    }
+                });
             }
             finally
             {

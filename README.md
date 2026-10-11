@@ -406,6 +406,46 @@ Prototype build, package and isolated installer checks:
 .\tests\prototype-installer-tests.ps1
 ```
 
+## Use the engine without the UI
+
+The region engine is a separate library, `DisplayWeave.Core.dll`, built from
+`src/DisplayWeave.Core`. It is compiled without any UI reference, so UI code cannot
+creep into it. `RegionService` loads the layout and app rules that the app saves,
+runs the engine, and offers the app's actions as methods that return a message for
+the user:
+- `Assign` a window to a region, as Force fullscreen or Maximize in region
+- `Ignore` an app, `Release` a window, `RemoveRule`
+- `Pause`, `ApplySavedRules`, `ApplyLayout`
+
+`Layout`, `Rules` and `Engine` expose the full state, and save failures surface as
+`IOException`. A minimal host:
+
+```csharp
+// csc /r:DisplayWeave.Core.dll /r:System.Drawing.dll Headless.cs
+using System;
+using System.Threading;
+using DisplayWeave;
+
+static class Headless
+{
+    static void Main()
+    {
+        WindowManager.EnableDpiAwareness(); // the engine works in physical pixels
+        string data = Environment.ExpandEnvironmentVariables(@"%LOCALAPPDATA%\DisplayWeave\data");
+        bool stop = false;
+        // Ctrl+C ends the loop, so disposing the service returns windows to normal.
+        Console.CancelKeyPress += delegate(object sender, ConsoleCancelEventArgs e) { e.Cancel = true; stop = true; };
+        using (RegionService service = new RegionService(data))
+            while (!stop) { service.Tick(); Thread.Sleep(250); } // always from the same thread
+    }
+}
+```
+
+Put the host next to `DisplayWeave.Core.dll` and the `native-v2-x64` and
+`native-v2-x86` folders; the engine starts its native helpers from there. Exit the
+DisplayWeave app first, so two controllers never handle the same windows.
+`DisplayMonitor` lists monitors by the device names that layouts and rules use.
+
 ## License
 
 DisplayWeave is released under the [MIT License](LICENSE). It includes MinHook,

@@ -29,7 +29,7 @@ function New-Fixture([string]$Name, [string]$Version, [object[]]$Extra = @(), [s
     $archive = New-Object IO.Compression.ZipArchive($stream, [IO.Compression.ZipArchiveMode]::Create, $true)
     try {
         $items = @([pscustomobject]@{ Name = 'release.json'; Content = ('{"version":"' + $Version + '"}'); Attributes = 0 })
-        foreach ($file in @('DisplayWeave.exe', 'native-v2-x64/RegionHookHost.exe', 'native-v2-x64/RegionHook.dll',
+        foreach ($file in @('DisplayWeave.exe', 'DisplayWeave.Core.dll', 'native-v2-x64/RegionHookHost.exe', 'native-v2-x64/RegionHook.dll',
             'native-v2-x86/RegionHookHost.exe', 'native-v2-x86/RegionHook.dll')) {
             if ($file -ne $Omit) { $items += [pscustomobject]@{ Name = $file; Content = 'Non-executable installer test fixture'; Attributes = 0 } }
         }

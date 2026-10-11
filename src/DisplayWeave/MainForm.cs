@@ -10,13 +10,11 @@ namespace DisplayWeave
 {
     public sealed partial class MainForm : Form
     {
-        private readonly WindowManager manager;
-        private readonly string settingsPath;
         private readonly string dataDirectory;
+        private readonly RegionService service;
         private readonly LayoutSettings settings;
-        private readonly string rulesPath;
         private readonly ApplicationRules rules;
-        private readonly FullscreenController fullscreen = new FullscreenController();
+        private readonly FullscreenController fullscreen;
         private readonly ComboBox monitors = new ComboBox();
         private readonly ComboBox windows = new ComboBox();
         private readonly ComboBox presets = new ComboBox();
@@ -55,18 +53,16 @@ namespace DisplayWeave
         private bool picking;
         private ApplicationIdentity pickedIdentity;
 
-        public MainForm(WindowManager manager, string automaticExecutableFilter = null, string dataDirectory = null, bool startInTray = false)
+        public MainForm(string automaticExecutableFilter = null, string dataDirectory = null, bool startInTray = false)
         {
-            this.manager = manager;
             this.dataDirectory = Path.GetFullPath(dataDirectory ?? AppDomain.CurrentDomain.BaseDirectory);
             this.startInTray = startInTray;
-            settingsPath = Path.Combine(this.dataDirectory, "layout.xml");
-            rulesPath = Path.Combine(this.dataDirectory, "rules.xml");
-            settings = LayoutSettings.Load(settingsPath);
-            fullscreen.AutomaticExecutableFilter = automaticExecutableFilter;
-            string ruleWarning;
-            rules = ApplicationRules.Load(rulesPath, out ruleWarning);
-            if (ruleWarning.Length > 0) notice = ruleWarning;
+            service = new RegionService(this.dataDirectory, automaticExecutableFilter);
+            settings = service.Layout;
+            rules = service.Rules;
+            fullscreen = service.Engine;
+            if (service.LoadWarning.Length > 0) notice = service.LoadWarning;
+            service.Saved += delegate { layoutDirty = false; SetLayoutState("Layout and app rules saved", false); };
             Text = "DisplayWeave — virtual monitor preview";
             if (!String.IsNullOrWhiteSpace(automaticExecutableFilter)) Text = "DisplayWeave — interface test";
             Font = new Font("Segoe UI", 10F);
@@ -87,7 +83,7 @@ namespace DisplayWeave
             InitializeTray();
             if (!layoutDirty) SetLayoutState("Saved layout loaded · " + settings.Zones.Count + " regions · " + settings.GridStepPixels + " px grid", false);
             timer.Interval = 250;
-            timer.Tick += delegate { fullscreen.Tick(manager.ListWindows(), rules, settings); UpdateStatus(); };
+            timer.Tick += delegate { service.Tick(); UpdateStatus(); };
             timer.Start();
             if (installRoot != null && String.IsNullOrWhiteSpace(automaticExecutableFilter))
             {
@@ -173,7 +169,7 @@ namespace DisplayWeave
         {
             var old = windows.SelectedItem as WindowCandidate;
             windows.Items.Clear();
-            foreach (WindowCandidate item in manager.ListWindows()) windows.Items.Add(item);
+            foreach (WindowCandidate item in WindowManager.ListWindows()) windows.Items.Add(item);
             if (old != null)
                 for (int i = 0; i < windows.Items.Count; i++)
                     if (((WindowCandidate)windows.Items[i]).Handle == old.Handle) windows.SelectedIndex = i;
@@ -191,8 +187,8 @@ namespace DisplayWeave
                     notice = "The previous layout was adjusted to a non-overlapping ruler grid. Review the regions before applying saved rules.";
                     try
                     {
-                        string backup = settingsPath + ".before-rulers.bak";
-                        if (File.Exists(settingsPath) && !File.Exists(backup)) File.Copy(settingsPath, backup);
+                        string backup = service.LayoutPath + ".before-rulers.bak";
+                        if (File.Exists(service.LayoutPath) && !File.Exists(backup)) File.Copy(service.LayoutPath, backup);
                     }
                     catch (IOException ex) { notice += " Layout backup could not be saved: " + ex.Message; }
                     catch (UnauthorizedAccessException ex) { notice += " Layout backup could not be saved: " + ex.Message; }
@@ -248,47 +244,12 @@ namespace DisplayWeave
 
         private void Assign(IntPtr handle, int regionIndex, ApplicationAction action = ApplicationAction.ForceFullscreen)
         {
-            if (regionIndex < 0 || regionIndex >= settings.Zones.Count) { notice = "There is no region for that shortcut."; UpdateStatus(); return; }
-            ApplicationIdentity identity;
-            string error;
-            if (!FullscreenController.TryInspect(handle, out identity, out error)) { notice = error; UpdateStatus(); return; }
-            var rule = new ApplicationRule { ExecutablePath = identity.ExecutablePath, WindowClass = identity.WindowClass,
-                DisplayName = Path.GetFileNameWithoutExtension(identity.ExecutablePath), Action = action,
-                MonitorDevice = CurrentScreen.DeviceName, ZoneId = settings.Zones[regionIndex].Id };
-            rules.Put(rule);
-            if (!SaveRulesAndLayout()) return;
-            RefreshRules();
-            Rectangle targetRegion;
-            List<Rectangle> layoutRegions;
-            if (!FullscreenController.TryResolveRegion(rule, settings, out targetRegion) ||
-                !FullscreenController.TryResolveLayout(settings, out layoutRegions))
-            {
-                notice = "The region changed while saving. Review the layout and assign the application again.";
-                UpdateStatus();
-                return;
-            }
-            if (action == ApplicationAction.MaximizeInRegion)
-            {
-                // Nothing is attached; the next tick fits the window whenever it is maximized.
-                fullscreen.Readmit(identity);
-                notice = "Saved for " + Path.GetFileName(identity.ExecutablePath) + ": maximize it from its title bar and DisplayWeave fits it into " +
-                    settings.Zones[regionIndex].Name + ". Nothing is loaded into the app.";
-                lastEngineError = notice;
-                UpdateStatus();
-                return;
-            }
-            fullscreen.Attach(identity, targetRegion, true, layoutRegions);
-            notice = fullscreen.LastMessage;
-            lastEngineError = notice;
-            UpdateStatus();
+            RunSaving(delegate { return service.Assign(handle, regionIndex, action); }, true);
         }
 
         private void RestoreAll()
         {
-            fullscreen.Pause();
-            notice = fullscreen.LastMessage;
-            lastEngineError = notice;
-            UpdateStatus();
+            Report(service.Pause());
         }
 
         public void PauseFullscreenRules()
@@ -298,11 +259,7 @@ namespace DisplayWeave
 
         private void ApplySavedRules()
         {
-            if (!SaveRulesAndLayout()) return;
-            fullscreen.Resume();
-            notice = fullscreen.LastMessage;
-            lastEngineError = notice;
-            UpdateStatus();
+            RunSaving(service.ApplySavedRules, false);
         }
 
         private void RestoreSelected()
@@ -314,56 +271,48 @@ namespace DisplayWeave
 
         private void ReleaseWindow(IntPtr handle)
         {
-            ApplicationIdentity identity;
-            string error;
-            if (FullscreenController.TryInspect(handle, out identity, out error))
-            { fullscreen.ReleaseProcess(identity); notice = fullscreen.LastMessage; lastEngineError = notice; }
-            else notice = error;
-            UpdateStatus();
+            Report(service.Release(handle));
         }
 
         private void IgnoreSelected()
         {
             var item = windows.SelectedItem as WindowCandidate;
             if (item == null) { notice = "Select an application first."; UpdateStatus(); return; }
-            ApplicationIdentity identity;
-            string error;
-            if (!FullscreenController.TryInspect(item.Handle, out identity, out error)) { notice = error; UpdateStatus(); return; }
-            fullscreen.ReleaseProcess(identity);
-            lastEngineError = fullscreen.LastMessage;
-            rules.Put(new ApplicationRule { ExecutablePath = identity.ExecutablePath, WindowClass = identity.WindowClass,
-                DisplayName = Path.GetFileNameWithoutExtension(identity.ExecutablePath), Action = ApplicationAction.Ignore });
-            if (SaveRulesAndLayout()) notice = "Ignore rule saved for " + Path.GetFileName(identity.ExecutablePath) + ". Its fullscreen behavior is unchanged.";
-            RefreshRules(); UpdateStatus();
+            RunSaving(delegate { return service.Ignore(item.Handle); }, true);
         }
 
         private void RemoveRule()
         {
             var selected = savedRules.SelectedItem as ApplicationRule;
             if (selected == null) return;
-            foreach (WindowCandidate window in manager.ListWindows())
-            {
-                ApplicationIdentity identity;
-                string error;
-                if (FullscreenController.TryInspect(window.Handle, out identity, out error) && selected.Matches(identity)) fullscreen.ReleaseProcess(identity);
-            }
-            rules.Rules.Remove(selected);
-            lastEngineError = fullscreen.LastMessage;
-            if (SaveRulesAndLayout()) notice = "Saved rule removed and matching applications released.";
-            RefreshRules(); UpdateStatus();
+            RunSaving(delegate { return service.RemoveRule(selected); }, true);
         }
 
-        private bool SaveRulesAndLayout()
+        // Shows an action's result; the engine message it produced counts as already shown.
+        private void Report(string message)
         {
+            lastEngineError = fullscreen.LastMessage;
+            notice = message;
+            UpdateStatus();
+        }
+
+        // Runs an action that saves the layout and rules. A failed save is shown instead of its result.
+        private bool RunSaving(Func<string> action, bool rulesChanged)
+        {
+            // End numeric editing first: a freshly typed grid step must be saved too.
             ValidateChildren();
-            try
+            string message;
+            bool saved = true;
+            try { message = action(); }
+            catch (IOException ex)
             {
-                settings.Save(settingsPath); rules.Save(rulesPath);
-                layoutDirty = false;
-                SetLayoutState("Layout and app rules saved", false);
-                return true;
+                message = "Could not save settings: " + ex.Message;
+                SetLayoutState(message, true);
+                saved = false;
             }
-            catch (Exception ex) { notice = "Could not save settings: " + ex.Message; SetLayoutState(notice, true); UpdateStatus(); return false; }
+            if (rulesChanged) RefreshRules();
+            Report(message);
+            return saved;
         }
 
         private void RefreshRules()
@@ -435,22 +384,19 @@ namespace DisplayWeave
             ValidateChildren();
             try
             {
-                settings.Save(settingsPath);
-                layoutDirty = false;
                 if (showResult)
                 {
-                    fullscreen.Resume();
-                    fullscreen.Tick(manager.ListWindows(), rules, settings);
+                    notice = service.ApplyLayout();
                     lastEngineError = fullscreen.LastMessage;
-                    notice = "Layout saved and applied. Apps can now maximize or go fullscreen in their current region.";
                 }
+                else service.SaveLayout();
                 SetLayoutState("Saved" + (showResult ? " and applied" : "") + " · " + settings.Zones.Count + " regions · " + settings.GridStepPixels + " px grid", false);
             }
-            catch (Exception ex)
+            catch (IOException ex)
             {
                 notice = "Could not save layout: " + ex.Message;
                 SetLayoutState(notice, true);
-                if (showResult) MessageBox.Show(this, notice + "\n\nFile: " + settingsPath, "Layout not saved", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                if (showResult) MessageBox.Show(this, notice + "\n\nFile: " + service.LayoutPath, "Layout not saved", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 UpdateStatus();
                 return false;
             }
@@ -507,7 +453,7 @@ namespace DisplayWeave
                 return;
             }
             timer.Stop();
-            fullscreen.Dispose();
+            service.Dispose();
             trayIcon.Visible = false;
         }
 
@@ -519,7 +465,7 @@ namespace DisplayWeave
 
         private void RestartAsAdministrator()
         {
-            if (ElevationRestart.IsElevated() || !SaveRulesAndLayout()) return;
+            if (ElevationRestart.IsElevated() || !RunSaving(delegate { service.Save(); return notice; }, false)) return;
             try
             {
                 using (var current = Process.GetCurrentProcess())
@@ -624,8 +570,8 @@ namespace DisplayWeave
             {
                 int index = m.WParam.ToInt32() - 800;
                 if (index == 10) RestoreAll();
-                else if (index == 0) ReleaseWindow(manager.ForegroundWindow);
-                else if (index >= 1 && index <= 9) Assign(manager.ForegroundWindow, index - 1);
+                else if (index == 0) ReleaseWindow(WindowManager.ForegroundWindow);
+                else if (index >= 1 && index <= 9) Assign(WindowManager.ForegroundWindow, index - 1);
             }
             else if (m.Msg == 0x7E && screens != null)
             {
@@ -638,7 +584,7 @@ namespace DisplayWeave
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { trayIcon.Visible = false; trayIcon.Dispose(); trayMenu.Dispose(); hints.Dispose(); timer.Dispose(); updateTimer.Dispose(); fullscreen.Dispose(); }
+            if (disposing) { trayIcon.Visible = false; trayIcon.Dispose(); trayMenu.Dispose(); hints.Dispose(); timer.Dispose(); updateTimer.Dispose(); service.Dispose(); }
             base.Dispose(disposing);
         }
 

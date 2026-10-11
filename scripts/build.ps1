@@ -7,7 +7,13 @@ if (-not (Test-Path -LiteralPath $compiler)) { throw 'The Windows .NET Framework
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = Join-Path $projectDirectory 'dist' }
 $outputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
-$sources = @('Program.cs', 'AppOptions.cs', 'ElevationRestart.cs', 'StartupRegistration.cs', 'Tests\LifecycleTests.cs', 'MainForm.cs', 'MainForm.Interface.cs', 'RulerCanvas.cs', 'Layout.cs', 'RulerLayout.cs', 'Tests\LayoutTests.cs', 'WindowManager.cs', 'Updater.cs', 'ApplicationRules.cs', 'FullscreenController.cs', 'Tests\RuleTests.cs', 'AutomaticRegionPolicy.cs', 'Tests\AutomaticRegionTests.cs', 'Tests\AutomaticControllerIntegration.cs') | ForEach-Object { Join-Path $sourceDirectory $_ }
-& $compiler /nologo /target:winexe /platform:x64 /optimize+ /warn:4 /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Xml.dll "/win32manifest:$sourceDirectory\app.manifest" "/out:$outputDirectory\DisplayWeave.exe" $sources
+# The engine library has no UI reference (/noconfig drops csc's default WinForms reference),
+# so code that needs a UI type cannot compile into it.
+$coreSources = @(Get-ChildItem -LiteralPath (Join-Path $projectDirectory 'src\DisplayWeave.Core') -Filter '*.cs' | ForEach-Object { $_.FullName })
+$core = Join-Path $outputDirectory 'DisplayWeave.Core.dll'
+& $compiler /noconfig /nologo /target:library /platform:x64 /optimize+ /warn:4 /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Xml.dll "/out:$core" $coreSources
+if ($LASTEXITCODE -ne 0) { throw 'Core build failed.' }
+$sources = @('Program.cs', 'AppOptions.cs', 'ElevationRestart.cs', 'StartupRegistration.cs', 'Updater.cs', 'MainForm.cs', 'MainForm.Interface.cs', 'RulerCanvas.cs', 'Tests\LifecycleTests.cs', 'Tests\LayoutTests.cs', 'Tests\RuleTests.cs', 'Tests\AutomaticRegionTests.cs', 'Tests\AutomaticControllerIntegration.cs') | ForEach-Object { Join-Path $sourceDirectory $_ }
+& $compiler /nologo /target:winexe /platform:x64 /optimize+ /warn:4 "/reference:$core" /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Xml.dll "/win32manifest:$sourceDirectory\app.manifest" "/out:$outputDirectory\DisplayWeave.exe" $sources
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
-Write-Output "Built $outputDirectory\DisplayWeave.exe"
+Write-Output "Built $outputDirectory\DisplayWeave.exe and DisplayWeave.Core.dll"

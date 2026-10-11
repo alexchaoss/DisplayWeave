@@ -212,6 +212,32 @@ release, pause and exit return a still-maximized window to its monitor's work ar
   user's running 0.5.1 attached to automatically, which invalidated that run.
 - Not yet verified with Diablo IV or any real game.
 
+## Engine library without the UI (October 11, 2026)
+
+The region engine moved to `src/DisplayWeave.Core` and builds as
+`DisplayWeave.Core.dll` with `/noconfig`, referencing only System, System.Core,
+System.Drawing and System.Xml. `DisplayMonitor` replaces WinForms `Screen`;
+`RegionService` holds the app's actions, and the window calls it. The unused
+assignment code in `WindowManager` was removed. Region behavior is unchanged
+apart from one addition: a new data folder now starts on the primary monitor
+instead of an empty monitor name, which left a headless host doing nothing.
+
+- Managed checks: 99 (layout 19, rules 40, automatic 13, lifecycle 27). New:
+  monitor lookup matches WinForms `Screen` (all monitors, case-insensitive
+  find, rectangle and window lookup); `RegionService` defaults to the primary
+  monitor, rejects a missing region or window without saving, saves both files
+  and raises `Saved` once, reloads cleanly, and reports a failed save as
+  `IOException` without raising `Saved`.
+- `scripts/release.ps1`: managed and native checks passed, installer tests 20
+  passed, setup tests 6 passed. The app ZIP contains `DisplayWeave.Core.dll`;
+  the installer requires it.
+- `build-projection.ps1 -Architecture all -RunSelfTests`: presenter 118, lease
+  219, plan 101 and input 57 on x64 and x86. `build-prototype.ps1
+  -RunSelfTests` 35, `package-prototype.ps1`, prototype installer tests 10.
+- The README's headless sample compiles against the built library. It was not
+  run, and neither was the app: both would apply the saved rules to the
+  desktop's windows.
+
 ## Rename to DisplayWeave
 
 The project is now DisplayWeave. Probes and test scripts no longer look for a

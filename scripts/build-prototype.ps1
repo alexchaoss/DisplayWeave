@@ -16,7 +16,7 @@ $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path -LiteralPath $compiler)) { throw 'The Windows .NET Framework C# compiler was not found.' }
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 
-$sources = @((Get-ChildItem -LiteralPath $source -Filter '*.cs').FullName) + (Join-Path $repository 'src\DisplayWeave\Layout.cs')
+$sources = @((Get-ChildItem -LiteralPath $source -Filter '*.cs').FullName) + (Join-Path $repository 'src\DisplayWeave.Core\Layout.cs')
 & $compiler /nologo /target:winexe /platform:x64 /optimize+ /warn:4 /warnaserror+ /reference:System.Windows.Forms.dll /reference:System.Drawing.dll `
     /reference:System.Xml.dll /reference:System.Web.Extensions.dll /reference:System.Core.dll "/win32manifest:$source\app.manifest" `
     "/out:$OutputDirectory\DisplayWeavePrototype.exe" $sources
