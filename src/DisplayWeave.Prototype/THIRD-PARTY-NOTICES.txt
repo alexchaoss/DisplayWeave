@@ -1,0 +1,14 @@
+DisplayWeave Prototype third-party notices
+
+Virtual Display Driver (MttVDD)
+  Project: https://github.com/VirtualDrivers/Virtual-Display-Driver
+  License: MIT License, Copyright (c) 2024 Virtual Display
+  Release 25.5.2, asset Signed-Driver-v24.12.24-x64.zip
+
+  The driver is NOT included in this package. install-prototype.ps1 downloads
+  the asset above from the upstream GitHub release (or uses a folder you
+  supply), checks the archive and file SHA-256 hashes and the files'
+  Authenticode publisher, and stores MttVDD.inf, MttVDD.dll and mttvdd.cat in
+  the installed version's driver folder. Windows stages the package only for
+  a session you approve and removes it afterwards unless it was already
+  installed before.

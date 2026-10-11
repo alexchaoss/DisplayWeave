@@ -1,0 +1,178 @@
+name: Windows build and tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Fetch the verified Zig toolchain
+        run: ./scripts/fetch-tools.ps1
+
+      - name: Build the Windows application
+        run: ./scripts/build.ps1
+
+      - name: Build x64 and x86 native components
+        run: ./scripts/build-native.ps1 -Architecture all
+
+      - name: Build isolated projection tools and run policy checks
+        run: ./scripts/build-projection.ps1 -Architecture all -RunSelfTests
+
+      - name: Build the projection prototype app and run its checks
+        run: ./scripts/build-prototype.ps1 -RunSelfTests -ProjectionDirectory dist/projection-x64
+
+      # These test modes do not open application windows, inject hooks, or change
+      # the desktop. Monitor/window rendering tests require an interactive desktop.
+      - name: Run managed and native policy tests
+        timeout-minutes: 5
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $reportDirectory = Join-Path $env:GITHUB_WORKSPACE 'test-results\ci'
+          New-Item -ItemType Directory -Path $reportDirectory -Force | Out-Null
+          $problems = [System.Collections.Generic.List[string]]::new()
+
+          $report = Join-Path $reportDirectory 'managed.txt'
+          $application = Join-Path $env:GITHUB_WORKSPACE 'dist\DisplayWeave.exe'
+          $testProcess = Start-Process -FilePath $application -ArgumentList @('--self-test', ('"{0}"' -f $report)) -WorkingDirectory $env:GITHUB_WORKSPACE -WindowStyle Hidden -Wait -PassThru
+          if ($testProcess.ExitCode -ne 0) {
+            $problems.Add("Managed tests exited with code $($testProcess.ExitCode).")
+          }
+
+          $passed = 0
+          foreach ($file in @('managed.txt', 'managed.rules.txt', 'managed.automatic.txt', 'managed.lifecycle.txt')) {
+            $reportPath = Join-Path $reportDirectory $file
+            if (!(Test-Path -LiteralPath $reportPath -PathType Leaf)) {
+              $problems.Add("Missing managed test report: $file")
+              continue
+            }
+            $result = Get-Content -LiteralPath $reportPath -Raw
+            Write-Output $result
+            $summary = [regex]::Match($result, '(?m)^(\d+) passed; 0 failed\.\s*$')
+            if ($summary.Success -and $result -notmatch '(?m)^FAIL ') {
+              $passed += [int]$summary.Groups[1].Value
+            } else {
+              $problems.Add("Managed test report has failures or no passing summary: $file")
+            }
+          }
+          if ($passed -lt 97) {
+            $problems.Add("Expected at least 97 passing managed tests; found $passed.")
+          }
+
+          foreach ($architecture in @('x64', 'x86')) {
+            $helper = Join-Path $env:GITHUB_WORKSPACE "dist\native-v2-$architecture\RegionHookHost.exe"
+            $policyReport = Join-Path $reportDirectory "$architecture-policy.txt"
+            & $helper --self-test-policy 2>&1 | Tee-Object -FilePath $policyReport
+            if ($LASTEXITCODE -ne 0) {
+              $problems.Add("$architecture shell policy tests exited with code $LASTEXITCODE.")
+            }
+            $policySummary = [regex]::Match((Get-Content -LiteralPath $policyReport -Raw), '^PASS shell and resident-hook policy: (\d+) deterministic cases;')
+            if (!$policySummary.Success -or [int]$policySummary.Groups[1].Value -lt 225) {
+              $problems.Add("$architecture shell policy tests did not report success.")
+            }
+            & $helper --self-test-ipc 2>&1 | Tee-Object -FilePath (Join-Path $reportDirectory "$architecture-ipc.txt")
+            if ($LASTEXITCODE -ne 0) { $problems.Add("$architecture IPC security tests failed.") }
+          }
+          if ($problems.Count -gt 0) { throw ($problems -join [Environment]::NewLine) }
+
+      - name: Package the portable application
+        run: ./scripts/package.ps1
+
+      - name: Run isolated installer regression tests
+        timeout-minutes: 5
+        run: ./tests/installer-tests.ps1 -OutputDirectory test-results/ci
+
+      # Quiet-mode setup runs against a temporary install root; nothing is launched or registered.
+      - name: Build the setup and run its end-to-end checks
+        timeout-minutes: 5
+        run: |
+          ./scripts/build-setup.ps1
+          ./tests/setup-tests.ps1 -OutputDirectory test-results/ci
+
+      # Packages the prototype (no driver inside) and checks its installer with
+      # a temporary root; pinned-driver cases are skipped without local files.
+      - name: Package the projection prototype and run installer checks
+        timeout-minutes: 5
+        run: |
+          ./scripts/package-prototype.ps1
+          ./tests/prototype-installer-tests.ps1 -OutputDirectory test-results/ci
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: DisplayWeave-test-results-${{ github.sha }}
+          path: |
+            test-results/ci/*.txt
+            test-results/ci/**/*.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload the portable package
+        uses: actions/upload-artifact@v7
+        with:
+          name: DisplayWeave-Windows-${{ github.sha }}
+          path: |
+            release/DisplayWeave-*.zip
+            release/DisplayWeave-*.zip.sha256
+            release/DisplayWeave-Setup-*.exe
+            release/DisplayWeave-Setup-*.exe.sha256
+            release/DisplayWeavePrototype-*.zip
+            release/DisplayWeavePrototype-*.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  # A push to main whose version.txt has no release yet publishes the files the build job
+  # just tested. Installed copies pick the release up through their update check.
+  release:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Download the tested package
+        uses: actions/download-artifact@v8
+        with:
+          name: DisplayWeave-Windows-${{ github.sha }}
+          path: assets
+
+      - name: Publish the release for a new version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(tr -d '[:space:]' < src/DisplayWeave/version.txt)"
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "v$version is already released; bump src/DisplayWeave/version.txt to publish another."
+            exit 0
+          fi
+          cd assets
+          gh release create "v$version" "DisplayWeave-$version.zip" "DisplayWeave-$version.zip.sha256" \
+            "DisplayWeave-Setup-$version.exe" "DisplayWeave-Setup-$version.exe.sha256" \
+            --repo "$GITHUB_REPOSITORY" --prerelease --title "DisplayWeave $version" --target "$GITHUB_SHA" --generate-notes

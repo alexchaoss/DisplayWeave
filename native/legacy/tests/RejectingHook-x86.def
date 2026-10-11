@@ -1,0 +1,5 @@
+LIBRARY RegionHook
+EXPORTS
+    RegionInitialize=_RegionInitialize@4
+    RegionGetMessageHook=_RegionGetMessageHook@12
+    RegionCallWindowHook=_RegionCallWindowHook@12

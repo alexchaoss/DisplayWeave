@@ -1,0 +1,35 @@
+# Local toolchain, compiled applications, and packaged releases.
+/.tools/
+/dist/
+/release/
+/*.exe
+/*.dll
+*.compile-check.dll
+*.obj
+*.o
+*.pdb
+
+# Generated test reports and isolated test data may contain local paths.
+/test-results/
+/test-work-*/
+/layout-tests-*/
+/rule-tests-*/
+/*test-results*.txt
+/*test-report*.txt
+/automatic-settings-*.xml
+/automatic-target-*.xml
+
+# Personal application settings and interrupted writes.
+/layout.xml
+/layout.xml.*
+/rules.xml
+/rules.xml.*
+*.tmp
+
+# Editor state. Keep MinHook's upstream build/ project files.
+/.vs/
+/.vscode/
+*.suo
+*.user
+Thumbs.db
+.DS_Store
