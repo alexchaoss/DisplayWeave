@@ -406,6 +406,13 @@ Prototype build, package and isolated installer checks:
 .\tests\prototype-installer-tests.ps1
 ```
 
+## License
+
+DisplayWeave is released under the [MIT License](LICENSE). It includes MinHook,
+which has its own BSD 2-Clause license in `third_party/minhook/LICENSE.txt`. The
+prototype downloads the separately licensed Virtual Display Driver at install time
+(see `src/DisplayWeave.Prototype/THIRD-PARTY-NOTICES.txt`).
+
 ## References
 
 - [Microsoft's thread-specific Windows hook API](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowshookexw)

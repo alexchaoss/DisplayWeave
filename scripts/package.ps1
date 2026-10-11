@@ -36,7 +36,7 @@ foreach ($architecture in @('x64', 'x86')) {
         $files += @{ Source = (Join-Path $NativeDirectory $relativePath); Destination = $relativePath }
     }
 }
-foreach ($document in @('README.md', 'TESTING.md', 'installer\install.ps1', 'src\DisplayWeave\release.json')) {
+foreach ($document in @('LICENSE', 'README.md', 'TESTING.md', 'installer\install.ps1', 'src\DisplayWeave\release.json')) {
     $files += @{ Source = (Join-Path $repository $document); Destination = (Split-Path -Leaf $document) }
 }
 foreach ($file in $files) {

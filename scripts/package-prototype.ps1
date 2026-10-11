@@ -20,6 +20,7 @@ $files = @(
     @{ Source = (Join-Path $BuildDirectory 'version.txt'); Destination = 'version.txt' },
     @{ Source = (Join-Path $repository 'installer\install-prototype.ps1'); Destination = 'install-prototype.ps1' },
     @{ Source = (Join-Path $repository 'docs\prototype-guide.md'); Destination = 'README.md' },
+    @{ Source = (Join-Path $repository 'LICENSE'); Destination = 'LICENSE' },
     @{ Source = (Join-Path $repository 'src\DisplayWeave.Prototype\THIRD-PARTY-NOTICES.txt'); Destination = 'THIRD-PARTY-NOTICES.txt' }
 )
 foreach ($file in $files) { if (-not (Test-Path -LiteralPath $file.Source -PathType Leaf)) { throw "Required package file is missing: $($file.Source)" } }
