@@ -21,7 +21,9 @@ namespace DisplayWeave
         private readonly ComboBox presets = new ComboBox();
         private readonly CheckBox workArea = new CheckBox();
         private readonly CheckBox automaticRegions = new CheckBox();
-        private readonly ComboBox savedRules = new ComboBox();
+        private readonly ListView savedRules = new ListView();
+        // The layout area to wait for after the display changed size, as a game in exclusive fullscreen does; empty when not waiting.
+        private Rectangle displayWait = Rectangle.Empty;
         private readonly Label pickedApp = new Label();
         private readonly Button picker = new Button();
         private readonly ListBox zoneList = new ListBox();
@@ -103,9 +105,9 @@ namespace DisplayWeave
             FormClosing += HandleFormClosing;
         }
 
-        // Checks the releases every six hours. A downloaded update installs by itself while this window is
-        // closed and no hooked app is maximized or fullscreen in a region, so a running game is never resized.
-        // Windows fitted from outside stay where they are; the new version adopts them.
+        // Checks the releases every six hours. A downloaded update installs by itself while this window is closed
+        // and no game is in its region through a Force fullscreen or Borderless in region rule, so it is never resized.
+        // Other windows fitted from outside stay where they are; the new version adopts them.
         private void UpdateTick()
         {
             if (updateSetup != null)
@@ -138,9 +140,9 @@ namespace DisplayWeave
             updateVersion = version;
             trayUpdate.Text = "Install DisplayWeave " + version + " now";
             trayUpdate.Visible = true;
-            updateNotice = "DisplayWeave " + version + " is ready. It installs when this window is closed and no game or other hooked app is maximized or fullscreen in a region.";
+            updateNotice = "DisplayWeave " + version + " is ready. It installs when this window is closed and no game is in its region through a Force fullscreen or Borderless in region rule.";
             if (!Visible && !fullscreen.HasExpandedApp) { InstallUpdate(); return; }
-            trayIcon.ShowBalloonTip(5000, "DisplayWeave " + version + " is ready", "It installs when no game or other hooked app is maximized or fullscreen in a region. To install now, choose it in the tray menu.", ToolTipIcon.Info);
+            trayIcon.ShowBalloonTip(5000, "DisplayWeave " + version + " is ready", "It installs when no game is in its region through a Force fullscreen or Borderless in region rule. To install now, choose it in the tray menu.", ToolTipIcon.Info);
         }
 
         private void InstallUpdate()
@@ -223,6 +225,7 @@ namespace DisplayWeave
             }
             zoneList.SelectedIndex = Math.Max(0, Math.Min(selected, settings.Zones.Count - 1));
             SyncRuleRegion();
+            foreach (ListViewItem row in savedRules.Items) row.SubItems[1].Text = RuleRegionName((ApplicationRule)row.Tag);
             canvas.Layout = rulerLayout;
             canvas.SelectedIndex = zoneList.SelectedIndex;
             gridSpacing.Value = rulerLayout.GridStep;
@@ -266,6 +269,8 @@ namespace DisplayWeave
 
         private void RestoreAll()
         {
+            // A pause chosen while waiting for the display stays: nothing resumes by itself when it returns.
+            displayWait = Rectangle.Empty;
             Report(service.Pause());
         }
 
@@ -293,7 +298,43 @@ namespace DisplayWeave
 
         private void ApplySavedRules()
         {
+            if (!displayWait.IsEmpty) { ReportDisplayWait(); return; }
             RunSaving(service.ApplySavedRules, false);
+        }
+
+        // Resume, unless waiting for the display: regions of the temporary display size would squeeze the apps.
+        private void ResumeHandling()
+        {
+            if (!displayWait.IsEmpty) { ReportDisplayWait(); return; }
+            SaveLayout(true);
+        }
+
+        private void ReportDisplayWait()
+        {
+            Report("Region handling resumes by itself when the display is back to " + displayWait.Width.ToString("N0") + " × " +
+                displayWait.Height.ToString("N0") + ". To use the display as it is now, choose Save layout.");
+        }
+
+        // Resumes once the display is back to the size the layout was made for, after a change such as a game in
+        // exclusive fullscreen makes. The layout is never rebuilt for the temporary size.
+        private void ResumeWhenDisplayReturns()
+        {
+            DisplayMonitor monitor = DisplayMonitor.Find(settings.MonitorDevice);
+            if (monitor == null || (settings.UseWorkArea ? monitor.WorkingArea : monitor.Bounds) != displayWait) return;
+            Rectangle area = displayWait;
+            EndDisplayWait();
+            if (layoutDirty || !fullscreen.Paused) return;
+            fullscreen.Resume();
+            Report("The display is back to " + area.Width.ToString("N0") + " × " + area.Height.ToString("N0") + "; region handling resumed.");
+        }
+
+        // Stops waiting for the display: the monitors and regions are read again for the display as it is now.
+        private void EndDisplayWait()
+        {
+            if (displayWait.IsEmpty) return;
+            displayWait = Rectangle.Empty;
+            LoadMonitors();
+            ReloadZones(zoneList.SelectedIndex);
         }
 
         private void RestoreSelected()
@@ -315,9 +356,22 @@ namespace DisplayWeave
             RunSaving(delegate { return service.Ignore(item.Handle); }, true);
         }
 
+        private ApplicationRule SelectedRule()
+        {
+            return savedRules.SelectedItems.Count > 0 ? savedRules.SelectedItems[0].Tag as ApplicationRule : null;
+        }
+
+        private string RuleRegionName(ApplicationRule rule)
+        {
+            if (rule.Action == ApplicationAction.Ignore) return "—";
+            Rectangle region;
+            int index = settings.Zones.FindIndex(delegate(Zone zone) { return zone.Id == rule.ZoneId; });
+            return index < 0 || !FullscreenController.TryResolveRegion(rule, settings, out region) ? "Missing" : settings.Zones[index].Name;
+        }
+
         private void RemoveRule()
         {
-            var selected = savedRules.SelectedItem as ApplicationRule;
+            var selected = SelectedRule();
             if (selected == null) return;
             RunSaving(delegate { return service.RemoveRule(selected); }, true);
         }
@@ -352,9 +406,13 @@ namespace DisplayWeave
         private void RefreshRules()
         {
             updating = true;
+            savedRules.BeginUpdate();
             savedRules.Items.Clear();
-            foreach (ApplicationRule rule in rules.Rules) savedRules.Items.Add(rule);
-            if (savedRules.Items.Count > 0) savedRules.SelectedIndex = savedRules.Items.Count - 1;
+            foreach (ApplicationRule rule in rules.Rules)
+                savedRules.Items.Add(new ListViewItem(new[] { rule.DisplayName, RuleRegionName(rule), ApplicationRule.ActionName(rule.Action), rule.WindowClass }) { Tag = rule });
+            // The newest rule is last; select it so its details show.
+            if (savedRules.Items.Count > 0) savedRules.Items[savedRules.Items.Count - 1].Selected = true;
+            savedRules.EndUpdate();
             updating = false;
             ShowRuleDetails(false);
             UpdateRuleActions();
@@ -363,21 +421,25 @@ namespace DisplayWeave
         private void ShowRuleDetails(bool announce = true)
         {
             if (updating) return;
-            var rule = savedRules.SelectedItem as ApplicationRule;
+            var rule = SelectedRule();
             if (rule == null)
             {
-                savedRuleDetails.Text = "No saved overrides. Add one above if an app needs it.";
+                savedRuleDetails.Text = savedRules.Items.Count == 0 ? "No saved rules. Add one above if an app needs it." : "Select a rule to see its details.";
                 hints.SetToolTip(savedRuleDetails, null);
                 return;
             }
             string details;
-            if (rule.Action == ApplicationAction.Ignore) details = "Ignore: " + rule.ExecutablePath + " [" + rule.WindowClass + "]";
+            Rectangle region;
+            if (rule.Action == ApplicationAction.Ignore) details = "Never moved or resized: " + rule.ExecutablePath + " [" + rule.WindowClass + "]";
+            else if (!FullscreenController.TryResolveRegion(rule, settings, out region))
+                details = "This rule's region or monitor is missing. Select its app and save a new region; it will not be retargeted automatically.";
             else
             {
-                Rectangle region;
-                bool exists = FullscreenController.TryResolveRegion(rule, settings, out region);
-                details = exists ? (rule.Action == ApplicationAction.MaximizeInRegion ? "Maximized window target: " : "Fullscreen target: ") + region.Width + " × " + region.Height + " at " + region.X + ", " + region.Y + " · " + rule.ExecutablePath
-                    : "This rule's region or monitor is missing. Select its app and save a new region; it will not be retargeted automatically.";
+                string where = region.Width + " × " + region.Height + " at " + region.X + ", " + region.Y;
+                details = (rule.Action == ApplicationAction.MaximizeInRegion ? "Fitted into " + where + " when maximized"
+                    : rule.Action == ApplicationAction.BorderlessInRegion ? "Shown without its title bar at " + where
+                    : rule.Action == ApplicationAction.CenteredFullscreen ? "Left alone; its exclusive fullscreen is centered by the graphics driver over " + where
+                    : "Component loaded; fullscreen in " + where) + " · " + rule.ExecutablePath;
             }
             savedRuleDetails.Text = details;
             hints.SetToolTip(savedRuleDetails, details);
@@ -407,7 +469,7 @@ namespace DisplayWeave
             if (!FullscreenController.TryInspect(handle, out identity, out error)) { notice = error; UpdateStatus(); return; }
             RefreshWindows();
             for (int i = 0; i < windows.Items.Count; i++)
-                if (((WindowCandidate)windows.Items[i]).Handle == handle) { windows.SelectedIndex = i; notice = "Application selected. Choose a target region and Force fullscreen, or Ignore this app."; UpdateStatus(); return; }
+                if (((WindowCandidate)windows.Items[i]).Handle == handle) { windows.SelectedIndex = i; notice = "Application selected. Choose its region and how DisplayWeave handles it, then Save rule."; UpdateStatus(); return; }
             notice = "The selected window is not an eligible application window."; UpdateStatus();
         }
 
@@ -449,7 +511,7 @@ namespace DisplayWeave
         {
             trayMenu.Items.Add("Open DisplayWeave", null, delegate { ShowSettingsWindow(); });
             trayPause = new ToolStripMenuItem("Pause region handling");
-            trayPause.Click += delegate { if (fullscreen.Paused) SaveLayout(true); else RestoreAll(); };
+            trayPause.Click += delegate { if (fullscreen.Paused) ResumeHandling(); else RestoreAll(); };
             trayMenu.Items.Add(trayPause);
             trayUpdate = new ToolStripMenuItem("Install update now") { Visible = false };
             trayUpdate.Click += delegate { if (updateSetup != null) InstallUpdate(); };
@@ -470,6 +532,7 @@ namespace DisplayWeave
             ticking = true;
             try
             {
+                if (!displayWait.IsEmpty) ResumeWhenDisplayReturns();
                 // The engine isolates each app's errors; one that still escapes affects every app, so handling
                 // pauses. It must not end DisplayWeave or raise a dialog every tick.
                 try { service.Tick(); }
@@ -611,7 +674,7 @@ namespace DisplayWeave
             "DisplayWeave is starting its component in this app. This normally takes a few seconds.",
             "DisplayWeave's component runs in this app: maximize and fullscreen stay inside its region.",
             "DisplayWeave's component is loaded but not confining this app right now: handling is paused, the window is on another display, or its rule changed.",
-            "Nothing is loaded into this app. DisplayWeave fitted its maximized or borderless fullscreen window into its region from outside. Exclusive fullscreen is not confined.",
+            "Nothing is loaded into this app. DisplayWeave fitted its window into its region from outside: maximized, in borderless fullscreen, or without its title bar under a Borderless in region rule. Exclusive fullscreen is not confined.",
             "",
             "Nothing is loaded into this app. Maximize it, or use its borderless (windowed) fullscreen mode, and DisplayWeave fits the window into this region from outside. Exclusive fullscreen still fills the monitor."
         };
@@ -720,11 +783,20 @@ namespace DisplayWeave
                 else if (index == 0) ReleaseWindow(WindowManager.ForegroundWindow);
                 else if (index >= 1 && index <= 9) Assign(WindowManager.ForegroundWindow, index - 1);
             }
-            else if (m.Msg == 0x7E && screens != null)
+            else if (m.Msg == 0x7E && screens != null && displayWait.IsEmpty)
             {
+                // A game in exclusive fullscreen changes the display until it leaves: keep the layout, pause and resume
+                // when the display is back. While waiting, later changes are left to the timer.
+                bool wasRunning = !fullscreen.Paused;
                 fullscreen.Pause();
                 lastEngineError = fullscreen.LastMessage;
-                BeginInvoke((Action)delegate { LoadMonitors(); ReloadZones(0); notice = "Display configuration changed. Rules paused; review the layout, then Apply saved rules."; UpdateStatus(); });
+                if (wasRunning && !layoutDirty && rulerLayout != null)
+                {
+                    displayWait = rulerLayout.Area;
+                    Report("The display changed, as a game in exclusive fullscreen does. Region handling is paused and resumes when the display is back to " +
+                        displayWait.Width.ToString("N0") + " × " + displayWait.Height.ToString("N0") + ". To use the display as it is now, choose Save layout.");
+                }
+                else BeginInvoke((Action)delegate { LoadMonitors(); ReloadZones(0); notice = "Display configuration changed. Rules paused; review the layout, then Apply saved rules."; UpdateStatus(); });
             }
             base.WndProc(ref m);
         }

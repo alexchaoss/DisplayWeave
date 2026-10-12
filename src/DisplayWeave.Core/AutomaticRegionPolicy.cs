@@ -4,7 +4,7 @@ using System.Drawing;
 
 namespace DisplayWeave
 {
-    public enum RegionControlMode { None, Automatic, Force, Maximize }
+    public enum RegionControlMode { None, Automatic, Force, Maximize, Borderless }
 
     // Pure geometry and intent policy: observing an ordinary window never requests fullscreen.
     public sealed class AutomaticRegionPolicy
@@ -20,7 +20,11 @@ namespace DisplayWeave
         public static RegionControlMode Decide(bool automaticEnabled, bool paused, bool released,
             ApplicationAction? matchedAction, bool ruleResolved)
         {
-            if (paused || released || matchedAction == ApplicationAction.Ignore) return RegionControlMode.None;
+            // A centered-fullscreen app runs in exclusive fullscreen; the graphics driver places it, not DisplayWeave.
+            if (paused || released || matchedAction == ApplicationAction.Ignore || matchedAction == ApplicationAction.CenteredFullscreen)
+                return RegionControlMode.None;
+            if (matchedAction == ApplicationAction.BorderlessInRegion)
+                return ruleResolved ? RegionControlMode.Borderless : RegionControlMode.None;
             if (matchedAction == ApplicationAction.ForceFullscreen)
                 return ruleResolved ? RegionControlMode.Force : RegionControlMode.None;
             if (matchedAction == ApplicationAction.MaximizeInRegion)

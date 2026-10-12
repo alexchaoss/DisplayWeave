@@ -237,6 +237,10 @@ namespace DisplayWeave
             internal Rectangle Region;
             // Why the component is not used, kept after a successful fit clears the failure.
             internal string Reason;
+            // A Borderless in region rule removed these styles; they and the window's first place return on release.
+            internal bool Styled;
+            internal long RemovedStyle, RemovedExStyle;
+            internal Rectangle OriginalBounds;
         }
         private readonly Dictionary<IntPtr, MaximizedFit> maximized = new Dictionary<IntPtr, MaximizedFit>();
         // Listed windows whose saved rule names a missing region or monitor, from the latest tick.
@@ -266,14 +270,26 @@ namespace DisplayWeave
         public int FailureCount { get { return failureHistory.Count; } }
         // Windows handled from outside (Ready or fitted) in the latest tick; nothing is loaded into them.
         public int OutsideFitCount { get { return readyApps.Count; } }
-        // A hooked app maximized or fullscreen in its region, or not yet reporting its state: restarting DisplayWeave
-        // would resize it. Windows fitted from outside do not count; an update leaves them for the next version.
-        public bool HasExpandedApp { get { foreach (Session s in sessions.Values) if (s.Enabled && s.NativeExpanded != false) return true; return false; } }
+        // A hooked app maximized or fullscreen in its region, or not yet reporting its state, or a window shown without
+        // its title bar: restarting DisplayWeave would resize it. Other windows fitted from outside stay for the next version.
+        public bool HasExpandedApp
+        {
+            get
+            {
+                foreach (Session s in sessions.Values) if (s.Enabled && s.NativeExpanded != false) return true;
+                foreach (MaximizedFit fit in maximized.Values) if (fit.Styled) return true;
+                return false;
+            }
+        }
 
         // Before an update: forget the windows fitted from outside instead of returning them to their whole monitor.
         // The next version adopts the maximized ones where they are, so they do not flash across the display; a borderless
-        // fullscreen window stays in its region and is taken over when it next enters fullscreen.
-        public void LeaveFittedWindows() { maximized.Clear(); }
+        // fullscreen window stays in its region and is taken over when it next enters fullscreen. A window shown without
+        // its title bar gets it back on exit as usual: the next version could not know its original style.
+        public void LeaveFittedWindows()
+        {
+            foreach (IntPtr handle in new List<IntPtr>(maximized.Keys)) if (!maximized[handle].Styled) maximized.Remove(handle);
+        }
         // Test scope only: automatic preparation is limited to this exact executable path when set.
         public string AutomaticExecutableFilter { get; set; }
 
@@ -631,7 +647,8 @@ namespace DisplayWeave
                         released.Contains(identity.ProcessKey), rule == null ? (ApplicationAction?)null : rule.Action, resolved);
                     if (mode == RegionControlMode.None)
                     {
-                        if (rule != null && rule.Action != ApplicationAction.Ignore && !resolved && !released.Contains(identity.ProcessKey))
+                        if (rule != null && rule.Action != ApplicationAction.Ignore && rule.Action != ApplicationAction.CenteredFullscreen &&
+                            !resolved && !released.Contains(identity.ProcessKey))
                             ruleProblems.Add(new HandledApp { Target = identity, State = HandledAppState.Error, Error = Path.GetFileName(identity.ExecutablePath) +
                                 " (PID " + identity.ProcessId + "): its saved rule names a region or display that no longer exists, so DisplayWeave leaves it alone." +
                                 " On App rules, choose a region for it again or remove the rule." });
@@ -642,6 +659,14 @@ namespace DisplayWeave
                     {
                         Disable(existing);
                         FitFromOutside(identity, region);
+                        continue;
+                    }
+                    if (mode == RegionControlMode.Borderless)
+                    {
+                        Disable(existing);
+                        // A folder window only ever gets the maximize fit (user decision, 2026-10-11).
+                        if (ShellProcessProtection.IsFolderWindow(identity.WindowClass)) FitFromOutside(identity, region);
+                        else ShowBorderless(identity, region);
                         continue;
                     }
                     if (mode == RegionControlMode.Force)
@@ -729,9 +754,14 @@ namespace DisplayWeave
             fit.Region = region;
             if (fit.Attempts >= MaximumFitAttempts || DateTime.UtcNow - fit.LastAttempt < FitRetryDelay) return;
             fit.LastAttempt = DateTime.UtcNow;
-            if (++fit.Attempts == MaximumFitAttempts)
+            // A borderless game that resizes itself back once always will: each further move only risks crashing
+            // an overlay that hooks its graphics.
+            bool zoomed = IsZoomed(handle);
+            if (++fit.Attempts >= (zoomed ? MaximumFitAttempts : 2))
             {
-                RecordFailure(target, Path.GetFileName(target.ExecutablePath) + " keeps changing its size, so DisplayWeave stopped fitting it. Restore and maximize it, or leave and reenter fullscreen, to retry.");
+                fit.Attempts = MaximumFitAttempts;
+                RecordFailure(target, zoomed ? "It keeps changing its maximized size, so DisplayWeave stopped fitting it. Restore and maximize it again to retry"
+                    : "It resized itself back to fill its monitor, so DisplayWeave stopped moving it. Set it to Windowed and give it a Borderless in region rule on App rules", true);
                 return;
             }
             if (!SetWindowPos(handle, IntPtr.Zero, wanted.X, wanted.Y, wanted.Width, wanted.Height, FitFlags))
@@ -742,6 +772,81 @@ namespace DisplayWeave
                 return;
             }
             LastMessage = "Fitted the " + Path.GetFileName(target.ExecutablePath) + " window into its region. Nothing is loaded into the app.";
+        }
+
+        // A Borderless in region rule: the window without its title bar and border, sized to its region, as a game
+        // set to Windowed accepts. Nothing is loaded into the app. Minimized and maximized windows are left as they are.
+        private void ShowBorderless(ApplicationIdentity target, Rectangle region)
+        {
+            IntPtr handle = target.Handle;
+            readyApps.Add(new HandledApp { Target = target, Region = region, State = HandledAppState.Ready });
+            MaximizedFit fit;
+            maximized.TryGetValue(handle, out fit);
+            if (fit != null && (fit.Target.Key != target.Key || !fit.Styled)) { maximized.Remove(handle); fit = null; }
+            NativeRect bounds;
+            // Changing a style waits for the window's thread; a window that stopped responding would block this one.
+            if (IsIconic(handle) || IsZoomed(handle) || IsHungAppWindow(handle) || !GetWindowRect(handle, out bounds)) return;
+            Rectangle current = Rectangle.FromLTRB(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom);
+            long style = WindowLong(handle, -16), extended = WindowLong(handle, -20);
+            // Some games put their title bar back and grow the window so the picture still fills the region, the title
+            // bar above it (off screen for a region at the top of the display). That is fitted, not a fight over styles.
+            if (((style & BorderStyles) == 0 && (extended & BorderExStyles) == 0 && current == region) || ClientBounds(handle) == region)
+            {
+                if (fit != null && fit.Attempts != 0 && fit.Attempts < MaximumFitAttempts) { fit.Attempts = 0; failureHistory.ClearTarget(target); }
+                return;
+            }
+            if (fit == null) maximized.Add(handle, fit = new MaximizedFit { Target = target, Styled = true, OriginalBounds = current });
+            fit.Region = region;
+            if (fit.Attempts >= MaximumFitAttempts || DateTime.UtcNow - fit.LastAttempt < FitRetryDelay) return;
+            fit.LastAttempt = DateTime.UtcNow;
+            if (++fit.Attempts == MaximumFitAttempts)
+            {
+                RecordFailure(target, "It keeps putting back its title bar or size, so DisplayWeave stopped. Check that it is set to Windowed, then pause and resume handling to retry", true);
+                return;
+            }
+            // Styles the app added back since its first fit return with it on release too.
+            fit.RemovedStyle |= style & BorderStyles;
+            fit.RemovedExStyle |= extended & BorderExStyles;
+            SetWindowLong(handle, -16, style & ~BorderStyles);
+            SetWindowLong(handle, -20, extended & ~BorderExStyles);
+            if (!SetWindowPos(handle, IntPtr.Zero, region.X, region.Y, region.Width, region.Height, FitFlags | SwpFrameChanged))
+            {
+                fit.Attempts = MaximumFitAttempts;
+                RecordFailure(target, "Windows did not move " + Path.GetFileName(target.ExecutablePath) + " (Windows error " +
+                    Marshal.GetLastWin32Error().ToString(CultureInfo.InvariantCulture) + "). An app running as administrator needs DisplayWeave restarted as administrator.");
+                return;
+            }
+            LastMessage = "Showed the " + Path.GetFileName(target.ExecutablePath) + " window without its title bar in its region. Nothing is loaded into the app.";
+        }
+
+        // The window's client area in screen coordinates, or empty when Windows does not report it.
+        private static Rectangle ClientBounds(IntPtr handle)
+        {
+            NativeRect client;
+            NativePoint origin = new NativePoint();
+            if (!GetClientRect(handle, out client) || !ClientToScreen(handle, ref origin)) return Rectangle.Empty;
+            return new Rectangle(origin.X, origin.Y, client.Right, client.Bottom);
+        }
+
+        // Gives a window shown borderless its title bar, border and first place back. A minimized or maximized
+        // window keeps its place; only its frame returns.
+        internal static void RestoreBorderless(IntPtr handle, long removedStyle, long removedExStyle, Rectangle original)
+        {
+            if (IsHungAppWindow(handle)) return;
+            SetWindowLong(handle, -16, WindowLong(handle, -16) | removedStyle);
+            SetWindowLong(handle, -20, WindowLong(handle, -20) | removedExStyle);
+            uint flags = FitFlags | SwpFrameChanged | (IsIconic(handle) || IsZoomed(handle) ? SwpNoMove | SwpNoSize : 0);
+            SetWindowPos(handle, IntPtr.Zero, original.X, original.Y, original.Width, original.Height, flags);
+        }
+
+        private static long WindowLong(IntPtr handle, int index)
+        {
+            return IntPtr.Size == 8 ? GetWindowLongPtr(handle, index).ToInt64() : GetWindowLong(handle, index);
+        }
+
+        private static void SetWindowLong(IntPtr handle, int index, long value)
+        {
+            if (IntPtr.Size == 8) SetWindowLongPtr(handle, index, new IntPtr(value)); else SetWindowLong32(handle, index, unchecked((int)value));
         }
 
         private void FitFromOutside(ApplicationIdentity target, Rectangle region)
@@ -788,7 +893,7 @@ namespace DisplayWeave
                         bool resolved = TryResolveRegion(rule, layout, out region);
                         RegionControlMode mode = AutomaticRegionPolicy.Decide(layout.AutomaticRegions, false, released.Contains(current.ProcessKey),
                             rule == null ? (ApplicationAction?)null : rule.Action, resolved);
-                        if (KeepsMaximizedFit(mode, OutsideFitOnly(current))) continue;
+                        if (fit.Styled ? mode == RegionControlMode.Borderless : KeepsMaximizedFit(mode, OutsideFitOnly(current))) continue;
                         ReturnToMonitor(fit);
                     }
                 }
@@ -811,6 +916,7 @@ namespace DisplayWeave
         private static void ReturnToMonitor(MaximizedFit fit)
         {
             IntPtr handle = fit.Target.Handle;
+            if (fit.Styled) { RestoreBorderless(handle, fit.RemovedStyle, fit.RemovedExStyle, fit.OriginalBounds); return; }
             Rectangle current, wanted, frame;
             DisplayMonitor monitor = DisplayMonitor.FromWindow(handle);
             bool zoomed = IsZoomed(handle);
@@ -1061,14 +1167,15 @@ namespace DisplayWeave
             return !Double.IsNaN(value) && !Double.IsInfinity(value);
         }
 
-        private void RecordFailure(ApplicationIdentity target, string detail)
+        // ownGuidance: the detail already says what to do, so no generic retry advice is added.
+        private void RecordFailure(ApplicationIdentity target, string detail, bool ownGuidance = false)
         {
             failed.Add(target.Key);
             string previous = failureHistory.For(target);
             bool genericExit = detail != null && detail.StartsWith("Native helper exited", StringComparison.OrdinalIgnoreCase);
             string message = !String.IsNullOrEmpty(previous) &&
                 (genericExit || (FailureRequiresRestart(previous) && !FailureRequiresRestart(detail)))
-                ? previous : FormatFailure(target, detail);
+                ? previous : FormatFailure(target, detail, ownGuidance);
             failureHistory.Record(target, message);
             LastMessage = message;
         }
@@ -1209,7 +1316,7 @@ namespace DisplayWeave
             return message + (enabled ? "." : "; control is paused.");
         }
 
-        internal static string FormatFailure(ApplicationIdentity target, string detail)
+        internal static string FormatFailure(ApplicationIdentity target, string detail, bool ownGuidance = false)
         {
             string name = target == null ? "Application" : Path.GetFileName(target.ExecutablePath);
             if (String.IsNullOrWhiteSpace(name)) name = "Application";
@@ -1217,7 +1324,7 @@ namespace DisplayWeave
             while (clean.StartsWith("ERROR ", StringComparison.OrdinalIgnoreCase)) clean = clean.Substring(6).TrimStart();
             clean = clean.Replace('\r', ' ').Replace('\n', ' ').TrimEnd('.', ' ');
             string targetText = name + (target == null ? String.Empty : " (PID " + target.ProcessId + ")");
-            string guidance = FailureIsLauncherExcluded(clean) ? String.Empty : FailureRequiresRestart(clean)
+            string guidance = ownGuidance || FailureIsLauncherExcluded(clean) ? String.Empty : FailureRequiresRestart(clean)
                 ? " Close and reopen this application before retrying; its existing hooks cannot safely reconnect to this window."
                 : FailureRequiresElevation(clean)
                     ? " Open Status & help > Restart as administrator, then approve the Windows prompt."
@@ -1392,14 +1499,22 @@ namespace DisplayWeave
         [DllImport("user32.dll")] private static extern bool IsZoomed(IntPtr handle);
         [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr handle, out NativeRect rectangle);
+        [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr handle, out NativeRect rectangle);
+        [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr handle, ref NativePoint point);
         [DllImport("user32.dll", SetLastError = true)] private static extern bool SetWindowPos(IntPtr handle, IntPtr after, int x, int y, int width, int height, uint flags);
         [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr handle, int attribute, out NativeRect value, int size);
-        private const uint SwpNoZOrder = 0x0004, SwpNoActivate = 0x0010, SwpNoOwnerZOrder = 0x0200, SwpNoSendChanging = 0x0400, SwpAsyncWindowPos = 0x4000;
+        private const uint SwpNoSize = 0x0001, SwpNoMove = 0x0002, SwpNoZOrder = 0x0004, SwpNoActivate = 0x0010, SwpFrameChanged = 0x0020,
+            SwpNoOwnerZOrder = 0x0200, SwpNoSendChanging = 0x0400, SwpAsyncWindowPos = 0x4000;
+        // The title bar and sizing border; the dialog, window, client and static edges.
+        private const long BorderStyles = 0x00C00000L | 0x00040000L, BorderExStyles = 0x00000001L | 0x00000100L | 0x00000200L | 0x00020000L;
         // Chromium-based apps reset any move of their maximized window in WM_WINDOWPOSCHANGING, so the outside fit skips that message.
         private const uint FitFlags = SwpNoZOrder | SwpNoActivate | SwpNoOwnerZOrder | SwpNoSendChanging | SwpAsyncWindowPos;
         [DllImport("user32.dll")] private static extern bool GetWindowPlacement(IntPtr handle, ref WindowPlacement placement);
         [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] private static extern int GetWindowLong(IntPtr handle, int index);
         [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr(IntPtr handle, int index);
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongW")] private static extern int SetWindowLong32(IntPtr handle, int index, int value);
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern IntPtr SetWindowLongPtr(IntPtr handle, int index, IntPtr value);
+        [DllImport("user32.dll")] private static extern bool IsHungAppWindow(IntPtr handle);
         [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr handle, uint flags);
         [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr handle, uint command);
         [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);

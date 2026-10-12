@@ -4,6 +4,58 @@ Commands recorded below before October 10, 2026 use the old root-level script pa
 
 The virtual-display projection prototype and its evidence moved to the `prototype` branch on October 11, 2026. Entries below that mention prototype or projection checks record what was run at the time.
 
+## App rules redesign, Borderless in region and Centered fullscreen (0.5.12-preview, October 12, 2026)
+
+Changes on top of `deff6da`; x64, same computer and display as below.
+
+- **App rules**: one "Add a rule for one app" flow (app, region, then one option with a short
+  summary, an ⓘ tooltip and an explanation box beside the list) and a saved-rules list with app,
+  region and option. Hotkeys still save Force fullscreen rules.
+- **Borderless in region** (`ShowBorderless`): removes `WS_CAPTION`, `WS_THICKFRAME` and the edge
+  extended styles from outside and sizes the window to the region; skips minimized, maximized and
+  hung windows; restores the removed styles and the first place on release (`RestoreBorderless`).
+  `HasExpandedApp` counts these windows and `LeaveFittedWindows` keeps them, so an update waits and
+  never leaves a window without its title bar. Folder windows get the maximize fit instead.
+- **Centered fullscreen**: the rule leaves the app alone. App rules shows the mode
+  (`DisplayMonitor.TryCenteredMode`), whether Windows offers it (`OffersMode`) and steps for the
+  adapter's vendor.
+- **Display changes**: a display change while handling runs pauses and keeps the layout; the timer
+  resumes once the layout's monitor is its layout size again. Resume handling, the tray item and
+  Apply saved rules wait instead; Save layout keeps the display as it is.
+- An automatically fitted borderless window that resizes itself back is left alone after one move.
+  Outside-fit failures carry their own advice instead of "Use Force fullscreen".
+- A Borderless in region window whose client area fills the region counts as fitted even when the
+  app put its title bar back (`ClientBounds`), so DisplayWeave no longer fights such an app.
+- App rules reloads the app list whenever it opens (an app started after DisplayWeave was missing),
+  and the line beside **Save rule** says what is missing while the button is disabled (now gray).
+
+Results:
+
+- `.\scripts\build.ps1 -OutputDirectory <scratch>`, then `--self-test`: layout 20, rules 53,
+  automatic 14, lifecycle 33 (120 passed, 0 failed); rules 54 (121) with the client-area case. New cases: rule decisions for the two new
+  actions; a hidden captioned window under a Borderless in region rule loses its title bar, fills
+  region 1, holds back updates through `LeaveFittedWindows`, and gets its title bar and place back
+  from `RestoreBorderless`; saved rules keep both new actions; centered modes (3720 × 2160 for the
+  middle of 1980 | 3720 | 1980 on 7680 × 2160; refused for a side or top region; accepted on a
+  second display); fit failures without the generic advice.
+- Sandboxed interface: the built `MainForm` hosted in a separate PowerShell process with scratch
+  settings, a copy of the user's layout and an executable filter that matches nothing. App rules
+  captured with the default option and with Centered fullscreen on region 2 (3,720 × 2,160, AMD
+  steps). `WM_DISPLAYCHANGE` sent without changing the display: handling paused, Resume handling
+  waited, handling resumed by itself within the next tick, and the layout stayed unchanged.
+- `.\scripts\release.ps1` (no `-Publish`): the same 121 managed tests, native policy and IPC on
+  x64 and x86, installer 20 of 20, setup 6 of 6.
+- Live, the user's desktop, a portable copy run with the installed data folder: a game in its
+  windowed fullscreen mode resized itself back to the monitor after the automatic fit (the expected
+  0.5.12 error). Set to Windowed under a Borderless in region rule on region 2, it put its title
+  bar and sizing border back after each removal and grew its window so its client area stayed in
+  the region (window 1971, -38, 3,738 x 2,147 around a 3,720 x 2,100 client area; title bar above
+  the display, not visible). The build before the client-area check reported an error after four
+  tries although the picture filled the region; the rebuilt copy was not run against the game.
+  Two other games filled their regions through the automatic fit, without a rule.
+- Not covered: Centered fullscreen with a real driver setting; a real resolution change; style
+  restoration on another process's window (only in-process).
+
 ## Automatic handling without the component (0.5.11-preview, October 11, 2026)
 
 Changes on top of `046d4e8`; x64, same computer and display as below.
@@ -22,18 +74,22 @@ Changes on top of `046d4e8`; x64, same computer and display as below.
 
 Results:
 
-- `.\scriptsuild.ps1 -OutputDirectory <scratch>`, then `--self-test`: layout 20, rules 49,
+- `.\scripts\build.ps1 -OutputDirectory <scratch>`, then `--self-test`: layout 20, rules 49,
   automatic 13, lifecycle 33 (115 passed, 0 failed). New cases: an update leaves fitted windows
   and the next version adopts them; automatic handling fits a hidden maximized window into a
   region and starts no helper; a hidden borderless window covering the primary display is
   fitted into region 1, and the same window with each overlay style stays where it is.
-- `.\scriptselease.ps1` (no `-Publish`): the same 115 managed tests, native policy and IPC
+- `.\scripts\release.ps1` (no `-Publish`): the same 115 managed tests, native policy and IPC
   checks on x64 and x86, installer 20 of 20, setup 6 of 6. The running DisplayWeave was left
   untouched.
 - Not covered: staying tracked across ticks and the return to the whole monitor need a window
   in another process, because the engine never inspects its own. There was no live run against
   a real game, a browser's fullscreen or a video player, and the live hook fixtures were not
   rerun (native code is unchanged).
+- Release: committed as `deff6da` and pushed. CI run 38244634568 passed on `windows-2022` and
+  `windows-2025` and attested the files; the maintainer signed and published the release. The
+  published setup and ZIP signatures verify against the pinned key, their checksums match and
+  name the files, and `gh attestation verify --source-ref refs/heads/main` passes for the setup.
 
 ## Security audit: signed releases, anonymous updates, diagnostic report, CI (0.5.10-preview, October 11, 2026)
 

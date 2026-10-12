@@ -85,14 +85,16 @@ namespace DisplayWeave
             return Engine.LastMessage;
         }
 
-        // Saves a rule for the window's app and applies it: Force attaches now, Maximize fits the
-        // window whenever it is maximized.
+        // Saves a rule for the window's app and applies it: Force attaches now, Maximize fits the window
+        // whenever it is maximized, Borderless shows it without its title bar, Centered leaves it alone.
         public string Assign(IntPtr window, int regionIndex, ApplicationAction action)
         {
             if (regionIndex < 0 || regionIndex >= Layout.Zones.Count) return "There is no region for that shortcut.";
             ApplicationIdentity identity;
             string error;
             if (!FullscreenController.TryInspect(window, out identity, out error)) return error;
+            if (action == ApplicationAction.BorderlessInRegion && ShellProcessProtection.IsFolderWindow(identity.WindowClass))
+                return "File Explorer folder windows can only use Maximize in region.";
             ApplicationRule rule = NewRule(identity, action);
             rule.MonitorDevice = Layout.MonitorDevice;
             rule.ZoneId = Layout.Zones[regionIndex].Id;
@@ -104,13 +106,22 @@ namespace DisplayWeave
             if (!FullscreenController.TryResolveRegion(rule, Layout, out region) ||
                 !FullscreenController.TryResolveLayout(Layout, out regions))
                 return "The region changed while saving. Review the layout and assign the application again.";
+            string name = Path.GetFileName(identity.ExecutablePath);
             if (action == ApplicationAction.MaximizeInRegion)
             {
                 // Nothing is attached; the next tick fits the window whenever it is maximized.
                 Engine.Readmit(identity);
-                return "Saved for " + Path.GetFileName(identity.ExecutablePath) + ": maximize it or use its borderless fullscreen mode, and DisplayWeave fits it into " +
+                return "Saved for " + name + ": maximize it or use its borderless fullscreen mode, and DisplayWeave fits it into " +
                     Layout.Zones[regionIndex].Name + ". Nothing is loaded into the app.";
             }
+            if (action == ApplicationAction.BorderlessInRegion)
+            {
+                Engine.Readmit(identity);
+                return "Saved for " + name + ": set it to Windowed, and DisplayWeave shows it without its title bar in " +
+                    Layout.Zones[regionIndex].Name + ". Nothing is loaded into the app.";
+            }
+            if (action == ApplicationAction.CenteredFullscreen)
+                return "Saved for " + name + ": DisplayWeave leaves its window alone. Run it in exclusive fullscreen at the size App rules shows.";
             Engine.Attach(identity, region, true, regions);
             return Engine.LastMessage;
         }

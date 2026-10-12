@@ -48,6 +48,29 @@ namespace DisplayWeave
             return Read(MonitorFromRect(ref rect, MonitorDefaultToNearest));
         }
 
+        // Exclusive fullscreen centered by the graphics driver lines up with a region only when the region sits in
+        // the middle of its monitor. The mode is the region's width and, for a region as tall as the layout, the
+        // monitor's full height (the taskbar is hidden in exclusive fullscreen).
+        public static bool TryCenteredMode(Rectangle region, Rectangle monitor, Rectangle layoutArea, out Size mode)
+        {
+            bool fullHeight = region.Top == layoutArea.Top && region.Bottom == layoutArea.Bottom;
+            Rectangle shown = fullHeight ? new Rectangle(region.X, monitor.Y, region.Width, monitor.Height) : region;
+            mode = shown.Size;
+            return shown.Width > 0 && shown.Height > 0 && monitor.Contains(shown) &&
+                Math.Abs((long)(shown.Left - monitor.Left) - (monitor.Right - shown.Right)) <= 2 &&
+                Math.Abs((long)(shown.Top - monitor.Top) - (monitor.Bottom - shown.Bottom)) <= 2;
+        }
+
+        // Whether Windows lists this resolution for the monitor, at any refresh rate.
+        public bool OffersMode(Size mode)
+        {
+            DevMode device = new DevMode();
+            device.Size = (ushort)Marshal.SizeOf(typeof(DevMode));
+            for (int i = 0; EnumDisplaySettings(DeviceName, i, ref device); i++)
+                if (device.PelsWidth == mode.Width && device.PelsHeight == mode.Height) return true;
+            return false;
+        }
+
         private static DisplayMonitor Read(IntPtr monitor)
         {
             MonitorInfo info = new MonitorInfo();
@@ -84,6 +107,21 @@ namespace DisplayWeave
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string Device;
         }
 
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct DevMode
+        {
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
+            public ushort SpecVersion, DriverVersion, Size, DriverExtra;
+            public uint Fields;
+            public int PositionX, PositionY;
+            public uint DisplayOrientation, DisplayFixedOutput;
+            public short Color, Duplex, YResolution, TTOption, Collate;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string FormName;
+            public ushort LogPixels;
+            public uint BitsPerPel, PelsWidth, PelsHeight, DisplayFlags, DisplayFrequency, IcmMethod, IcmIntent, MediaType, DitherType,
+                Reserved1, Reserved2, PanningWidth, PanningHeight;
+        }
+
         private delegate bool MonitorEnumProc(IntPtr monitor, IntPtr dc, ref NativeRect area, IntPtr data);
 
         [DllImport("user32.dll")] private static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorEnumProc callback, IntPtr data);
@@ -91,5 +129,6 @@ namespace DisplayWeave
         [DllImport("user32.dll")] private static extern IntPtr MonitorFromRect(ref NativeRect area, uint flags);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
         [DllImport("shcore.dll")] private static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool EnumDisplaySettings(string device, int mode, ref DevMode settings);
     }
 }

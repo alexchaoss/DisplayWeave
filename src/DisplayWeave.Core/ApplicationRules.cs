@@ -7,9 +7,9 @@ using System.Xml.Serialization;
 
 namespace DisplayWeave
 {
-    // MaximizeInRegion never loads anything into the app: DisplayWeave moves the
-    // window from outside, and only while the user has it maximized.
-    public enum ApplicationAction { ForceFullscreen, Ignore, MaximizeInRegion }
+    // MaximizeInRegion and BorderlessInRegion never load anything into the app: DisplayWeave moves the
+    // window from outside. CenteredFullscreen leaves the app alone; the graphics driver centers its fullscreen.
+    public enum ApplicationAction { ForceFullscreen, Ignore, MaximizeInRegion, BorderlessInRegion, CenteredFullscreen }
 
     [Serializable]
     public sealed class ApplicationRule
@@ -29,8 +29,19 @@ namespace DisplayWeave
 
         public override string ToString()
         {
-            return DisplayName + "  ·  " + (Action == ApplicationAction.Ignore ? "Ignore" :
-                Action == ApplicationAction.MaximizeInRegion ? "Maximize in region" : "Fullscreen region") + "  ·  " + WindowClass;
+            return DisplayName + "  ·  " + ActionName(Action) + "  ·  " + WindowClass;
+        }
+
+        public static string ActionName(ApplicationAction action)
+        {
+            switch (action)
+            {
+                case ApplicationAction.Ignore: return "Ignore";
+                case ApplicationAction.MaximizeInRegion: return "Maximize in region";
+                case ApplicationAction.BorderlessInRegion: return "Borderless in region";
+                case ApplicationAction.CenteredFullscreen: return "Centered fullscreen";
+                default: return "Force fullscreen";
+            }
         }
     }
 
@@ -58,8 +69,7 @@ namespace DisplayWeave
                     ApplicationRules result = (ApplicationRules)new XmlSerializer(typeof(ApplicationRules)).Deserialize(reader);
                     result.Rules.RemoveAll(delegate(ApplicationRule rule) { return rule == null || String.IsNullOrWhiteSpace(rule.ExecutablePath)
                         || !Path.IsPathRooted(rule.ExecutablePath) || String.IsNullOrEmpty(rule.WindowClass)
-                        || (rule.Action != ApplicationAction.Ignore && rule.Action != ApplicationAction.ForceFullscreen
-                            && rule.Action != ApplicationAction.MaximizeInRegion); });
+                        || !Enum.IsDefined(typeof(ApplicationAction), rule.Action); });
                     if (result.Rules.Count > 512) result.Rules.RemoveRange(512, result.Rules.Count - 512);
                     return result;
                 }

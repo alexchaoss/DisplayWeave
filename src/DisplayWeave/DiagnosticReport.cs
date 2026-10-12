@@ -190,7 +190,7 @@ namespace DisplayWeave
         }
 
         // Display device name (\\.\DISPLAY1) to the adapter that drives it.
-        private static Dictionary<string, string> DisplayAdapters()
+        internal static Dictionary<string, string> DisplayAdapters()
         {
             Dictionary<string, string> result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             DisplayDevice device = new DisplayDevice();

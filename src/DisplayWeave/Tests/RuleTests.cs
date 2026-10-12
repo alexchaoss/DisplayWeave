@@ -387,6 +387,118 @@ namespace DisplayWeave
                     // window in another process, because the engine never inspects its own.
                 });
 
+                test("Borderless in region removes the title bar from outside and puts it back", delegate
+                {
+                    using (System.Windows.Forms.Form window = new System.Windows.Forms.Form { StartPosition = System.Windows.Forms.FormStartPosition.Manual,
+                        Bounds = new Rectangle(100, 100, 800, 600) })
+                    {
+                        DisplayMonitor primary = DisplayMonitor.FromRectangle(new Rectangle(0, 0, 1, 1));
+                        LayoutSettings layout = new LayoutSettings { MonitorDevice = primary.DeviceName };
+                        Rectangle region = layout.Zones[0].ToPixels(layout.UseWorkArea ? primary.WorkingArea : primary.Bounds);
+                        ApplicationIdentity game = new ApplicationIdentity { ExecutablePath = @"C:\Apps\Game.exe", WindowClass = "GameWindow",
+                            ProcessId = (uint)System.Diagnostics.Process.GetCurrentProcess().Id, CreationTime = 1, Handle = window.Handle };
+                        ApplicationRules rules = new ApplicationRules();
+                        rules.Rules.Add(new ApplicationRule { ExecutablePath = game.ExecutablePath, WindowClass = game.WindowClass, DisplayName = "Game",
+                            Action = ApplicationAction.BorderlessInRegion, MonitorDevice = primary.DeviceName, ZoneId = layout.Zones[0].Id });
+                        WindowCandidate[] windows = { new WindowCandidate { Handle = window.Handle, Title = "Game", Identity = game } };
+                        long style = WindowStyle(window.Handle, -16), extended = WindowStyle(window.Handle, -20);
+                        Rectangle original = WindowBounds(window.Handle);
+                        Assert((style & 0x00C40000L) == 0x00C40000L, "The test window has no title bar to remove.");
+                        // A thread that has not checked its messages for a while counts as hung; the engine skips hung windows.
+                        System.Windows.Forms.Application.DoEvents();
+                        using (FullscreenController controller = new FullscreenController())
+                        {
+                            controller.Tick(windows, rules, layout);
+                            Assert((WindowStyle(window.Handle, -16) & 0x00C40000L) == 0 && WindowBounds(window.Handle) == region,
+                                "The window was not shown without its title bar in its region: " + WindowBounds(window.Handle) + " instead of " + region + ".");
+                            Assert(controller.HasExpandedApp && controller.HandledApps().Exists(delegate(HandledApp app) { return app.State == HandledAppState.FittedFromOutside; }),
+                                "A borderless window did not hold back updates or was not listed.");
+                            controller.LeaveFittedWindows();
+                            Assert(controller.HasExpandedApp, "An update forgot a window whose title bar it must put back.");
+                        }
+                        // The engine never inspects its own process, so the release is checked directly.
+                        System.Windows.Forms.Application.DoEvents();
+                        FullscreenController.RestoreBorderless(window.Handle, style & 0x00C40000L, extended & 0x00020301L, original);
+                        Assert((WindowStyle(window.Handle, -16) & 0x00C40000L) == 0x00C40000L && WindowBounds(window.Handle) == original,
+                            "The title bar or place did not come back: " + WindowBounds(window.Handle) + " instead of " + original + ".");
+                    }
+                });
+
+                test("A game that puts its title bar back around a picture filling the region counts as fitted", delegate
+                {
+                    using (System.Windows.Forms.Form window = new System.Windows.Forms.Form { StartPosition = System.Windows.Forms.FormStartPosition.Manual,
+                        Bounds = new Rectangle(100, 100, 800, 600) })
+                    {
+                        DisplayMonitor primary = DisplayMonitor.FromRectangle(new Rectangle(0, 0, 1, 1));
+                        LayoutSettings layout = new LayoutSettings { MonitorDevice = primary.DeviceName };
+                        Rectangle region = layout.Zones[0].ToPixels(layout.UseWorkArea ? primary.WorkingArea : primary.Bounds);
+                        ApplicationIdentity game = new ApplicationIdentity { ExecutablePath = @"C:\Apps\Game.exe", WindowClass = "GameWindow",
+                            ProcessId = (uint)System.Diagnostics.Process.GetCurrentProcess().Id, CreationTime = 1, Handle = window.Handle };
+                        ApplicationRules rules = new ApplicationRules();
+                        rules.Rules.Add(new ApplicationRule { ExecutablePath = game.ExecutablePath, WindowClass = game.WindowClass, DisplayName = "Game",
+                            Action = ApplicationAction.BorderlessInRegion, MonitorDevice = primary.DeviceName, ZoneId = layout.Zones[0].Id });
+                        WindowCandidate[] windows = { new WindowCandidate { Handle = window.Handle, Title = "Game", Identity = game } };
+                        long style = WindowStyle(window.Handle, -16), extended = WindowStyle(window.Handle, -20);
+                        Rectangle original = WindowBounds(window.Handle), client = window.RectangleToScreen(window.ClientRectangle);
+                        System.Windows.Forms.Application.DoEvents();
+                        using (FullscreenController controller = new FullscreenController())
+                        {
+                            controller.Tick(windows, rules, layout);
+                            // As such a game does: its title bar comes back and the window grows so its client area stays in the region.
+                            System.Windows.Forms.Application.DoEvents();
+                            FullscreenController.RestoreBorderless(window.Handle, style & 0x00C40000L, extended & 0x00020301L, Rectangle.FromLTRB(
+                                region.Left - (client.Left - original.Left), region.Top - (client.Top - original.Top),
+                                region.Right + (original.Right - client.Right), region.Bottom + (original.Bottom - client.Bottom)));
+                            System.Threading.Thread.Sleep(2100); // past the retry delay, so another removal would show
+                            System.Windows.Forms.Application.DoEvents();
+                            controller.Tick(windows, rules, layout);
+                            System.Windows.Forms.Application.DoEvents();
+                            Assert((WindowStyle(window.Handle, -16) & 0x00C40000L) == 0x00C40000L && window.RectangleToScreen(window.ClientRectangle) == region,
+                                "DisplayWeave fought a title bar around a picture already in its region: client " + window.RectangleToScreen(window.ClientRectangle) + ".");
+                            // The engine never inspects its own process, so this window is listed as Ready rather than Fitted from outside.
+                            Assert(!controller.HandledApps().Exists(delegate(HandledApp app) { return app.State == HandledAppState.Error; }),
+                                "A picture filling its region was reported as an error.");
+                        }
+                    }
+                });
+
+                test("Saved rules keep the borderless and centered actions", delegate
+                {
+                    string path = Path.Combine(Path.GetTempPath(), "DisplayWeave-rules-" + Guid.NewGuid().ToString("N") + ".xml");
+                    try
+                    {
+                        ApplicationRules saved = new ApplicationRules();
+                        saved.Rules.Add(new ApplicationRule { ExecutablePath = @"C:\Apps\A.exe", WindowClass = "A", Action = ApplicationAction.BorderlessInRegion, ZoneId = "z" });
+                        saved.Rules.Add(new ApplicationRule { ExecutablePath = @"C:\Apps\B.exe", WindowClass = "B", Action = ApplicationAction.CenteredFullscreen, ZoneId = "z" });
+                        saved.Save(path);
+                        string warning;
+                        ApplicationRules loaded = ApplicationRules.Load(path, out warning);
+                        Assert(warning.Length == 0 && loaded.Rules.Count == 2 && loaded.Rules[0].Action == ApplicationAction.BorderlessInRegion &&
+                            loaded.Rules[1].Action == ApplicationAction.CenteredFullscreen, "A new rule action was lost on load: " + warning);
+                    }
+                    finally { File.Delete(path); }
+                });
+
+                test("Centered fullscreen lines up only with a region in the middle of its display", delegate
+                {
+                    Rectangle monitor = new Rectangle(0, 0, 7680, 2160), work = new Rectangle(0, 0, 7680, 2100);
+                    Size mode;
+                    Assert(DisplayMonitor.TryCenteredMode(new Rectangle(1980, 0, 3720, 2100), monitor, work, out mode) && mode == new Size(3720, 2160),
+                        "The middle of 1980 | 3720 | 1980 did not give 3720 x 2160: " + mode + ".");
+                    Assert(!DisplayMonitor.TryCenteredMode(new Rectangle(0, 0, 1980, 2100), monitor, work, out mode), "A side region was offered centered fullscreen.");
+                    Assert(!DisplayMonitor.TryCenteredMode(new Rectangle(1980, 0, 3720, 1050), monitor, work, out mode), "A top region was offered centered fullscreen.");
+                    Rectangle second = new Rectangle(7680, 0, 3840, 2160);
+                    Assert(DisplayMonitor.TryCenteredMode(new Rectangle(8640, 0, 1920, 2160), second, second, out mode) && mode == new Size(1920, 2160),
+                        "The middle of a second display was refused: " + mode + ".");
+                });
+
+                test("Outside fit failures carry their own advice instead of suggesting the component", delegate
+                {
+                    ApplicationIdentity target = new ApplicationIdentity { ExecutablePath = @"C:\Apps\Game.exe", ProcessId = 7 };
+                    string message = FullscreenController.FormatFailure(target, "It resized itself back to fill its monitor, so DisplayWeave stopped moving it", true);
+                    Assert(message == "Game.exe (PID 7): It resized itself back to fill its monitor, so DisplayWeave stopped moving it.", "Unexpected fit failure: " + message);
+                });
+
                 test("Native launcher rejection remains distinct from an ordinary unsupported operation", delegate
                 {
                     ApplicationIdentity target = new ApplicationIdentity { ExecutablePath = @"C:\Apps\Battle.net.exe", ProcessId = 90 };
@@ -862,6 +974,19 @@ namespace DisplayWeave
         }
 
         // Hidden and maximized; like Chromium, it refuses every move or resize in WM_WINDOWPOSCHANGING while maximized.
+        private struct TestRect { public int Left, Top, Right, Bottom; }
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr(IntPtr handle, int index);
+        [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr handle, out TestRect rect);
+
+        private static long WindowStyle(IntPtr handle, int index) { return GetWindowLongPtr(handle, index).ToInt64(); }
+
+        private static Rectangle WindowBounds(IntPtr handle)
+        {
+            TestRect rect;
+            GetWindowRect(handle, out rect);
+            return Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
+        }
+
         // A hidden window without a title bar, as a game in borderless fullscreen or an overlay.
         private sealed class BorderlessWindow : System.Windows.Forms.Form
         {

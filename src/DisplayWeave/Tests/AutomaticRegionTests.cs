@@ -135,6 +135,16 @@ namespace DisplayWeave
                     "Ignored, released or component-handled window stayed fitted from outside.");
             });
 
+            test("Borderless rules never attach and centered-fullscreen apps are left alone", delegate
+            {
+                Assert(AutomaticRegionPolicy.Decide(true, false, false, ApplicationAction.BorderlessInRegion, true) == RegionControlMode.Borderless, "Valid borderless rule was not applied.");
+                Assert(AutomaticRegionPolicy.Decide(true, false, false, ApplicationAction.BorderlessInRegion, false) == RegionControlMode.None, "Broken borderless rule fell back to another mode.");
+                Assert(AutomaticRegionPolicy.Decide(true, true, false, ApplicationAction.BorderlessInRegion, true) == RegionControlMode.None &&
+                    AutomaticRegionPolicy.Decide(true, false, true, ApplicationAction.BorderlessInRegion, true) == RegionControlMode.None, "Pause or release lost to a borderless rule.");
+                Assert(AutomaticRegionPolicy.Decide(true, false, false, ApplicationAction.CenteredFullscreen, true) == RegionControlMode.None &&
+                    AutomaticRegionPolicy.Decide(true, false, false, ApplicationAction.CenteredFullscreen, false) == RegionControlMode.None, "A centered-fullscreen app was handled.");
+            });
+
             test("Maximized bounds keep the window's invisible border overhang around the region", delegate
             {
                 // A maximized window on a 7680x2100 work area, with 8 px invisible borders.
