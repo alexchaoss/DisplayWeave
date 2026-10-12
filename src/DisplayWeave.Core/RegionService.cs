@@ -9,15 +9,20 @@ using System.Runtime.CompilerServices;
 
 namespace DisplayWeave
 {
-    // DisplayWeave without its UI: loads and saves the layout and app rules, drives the engine and
+    // DisplayWeave without its UI: loads and saves the layout, app rules and shortcuts, drives the engine and
     // applies rules to windows. Call Tick about every 250 ms, always from the same thread. Actions
-    // return a message for the user; saving failures surface as IOException.
-    public sealed class RegionService : IDisposable
+    // return a message for the user; saving failures surface as IOException. Layout profiles and following
+    // a renamed display are in RegionService.Profiles.cs.
+    public sealed partial class RegionService : IDisposable
     {
+        private readonly string dataDirectory;
+
         public RegionService(string dataDirectory, string automaticExecutableFilter = null)
         {
+            this.dataDirectory = Path.GetFullPath(dataDirectory);
             LayoutPath = Path.Combine(dataDirectory, "layout.xml");
             RulesPath = Path.Combine(dataDirectory, "rules.xml");
+            ShortcutsPath = Path.Combine(dataDirectory, "shortcuts.xml");
             Layout = LayoutSettings.Load(LayoutPath);
             // A new layout names no monitor; use the primary one, which always contains 0,0.
             if (String.IsNullOrEmpty(Layout.MonitorDevice))
@@ -34,8 +39,13 @@ namespace DisplayWeave
                 catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
             }
-            LoadWarning = warning;
+            string shortcutWarning;
+            Shortcuts = ShortcutSettings.Load(ShortcutsPath, out shortcutWarning);
+            string moved = RebindMonitor();
+            LoadWarning = String.Join(" ", new List<string>(new[] { warning, shortcutWarning, moved ?? String.Empty }).FindAll(delegate(string text) { return text.Length > 0; }));
+            if (LoadWarning.Length > 0) ActivityLog.Write(LoadWarning);
             Engine = new FullscreenController { AutomaticExecutableFilter = automaticExecutableFilter };
+            Engine.UseDataDirectory(this.dataDirectory);
         }
 
         // Raised after the layout, or the layout and rules, were written.
@@ -43,25 +53,39 @@ namespace DisplayWeave
 
         public string LayoutPath { get; private set; }
         public string RulesPath { get; private set; }
+        public string ShortcutsPath { get; private set; }
         public LayoutSettings Layout { get; private set; }
         public ApplicationRules Rules { get; private set; }
+        public ShortcutSettings Shortcuts { get; private set; }
         public FullscreenController Engine { get; private set; }
-        // Empty unless rules.xml could not be read as saved.
+        // What the user should know after loading: a settings file could not be read, or the layout followed its renamed display.
         public string LoadWarning { get; private set; }
 
         public void Tick()
         {
             Engine.Tick(WindowManager.ListWindows(), Rules, Layout);
+            if (!Engine.RulesUsed) return;
+            // Only the rules' last-used dates changed, so nothing else needs to know.
+            Engine.RulesUsed = false;
+            try { Rules.Save(RulesPath); }
+            catch (Exception ex) { ActivityLog.Write("The rules' last-used dates could not be saved: " + ex.Message); }
         }
 
         public void SaveLayout()
         {
-            Write(delegate { Layout.Save(LayoutPath); });
+            Write(delegate { StampMonitor(); Layout.Save(LayoutPath); });
         }
 
         public void Save()
         {
-            Write(delegate { Layout.Save(LayoutPath); Rules.Save(RulesPath); });
+            Write(delegate { StampMonitor(); Layout.Save(LayoutPath); Rules.Save(RulesPath); });
+        }
+
+        public void SaveShortcuts()
+        {
+            try { Shortcuts.Save(ShortcutsPath); }
+            catch (IOException) { throw; }
+            catch (Exception ex) { throw new IOException(ex.Message, ex); }
         }
 
         public string ApplyLayout()
@@ -165,10 +189,12 @@ namespace DisplayWeave
             Engine.Dispose();
         }
 
-        private static ApplicationRule NewRule(ApplicationIdentity identity, ApplicationAction action)
+        // An Ignore rule applies in every layout profile; the others belong to the active one.
+        private ApplicationRule NewRule(ApplicationIdentity identity, ApplicationAction action)
         {
-            return new ApplicationRule { ExecutablePath = identity.ExecutablePath, WindowClass = identity.WindowClass,
-                DisplayName = Path.GetFileNameWithoutExtension(identity.ExecutablePath), Action = action };
+            return new ApplicationRule { ExecutablePath = identity.ExecutablePath, WindowClass = identity.WindowClass, AppId = identity.AppId,
+                DisplayName = identity.AppId != null ? StoreAppIdentity.DisplayName(identity.AppId) : Path.GetFileNameWithoutExtension(identity.ExecutablePath),
+                Action = action, ProfileName = action == ApplicationAction.Ignore ? null : Layout.ProfileName };
         }
 
         private void Write(Action save)

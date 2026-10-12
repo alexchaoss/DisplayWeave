@@ -15,6 +15,20 @@ namespace DisplayWeave
         public Rectangle WorkingArea { get; private set; }
         // Windows display scaling, such as 125; 100 when Windows cannot report it.
         public int ScalePercent { get; private set; }
+        private string deviceId;
+
+        // The monitor's device path, which stays the same when Windows renumbers the \.\DISPLAYn names; empty if unknown.
+        // It identifies the monitor model and port, so it never goes into a diagnostic report.
+        public string DeviceId
+        {
+            get
+            {
+                if (deviceId != null) return deviceId;
+                DisplayDevice device = new DisplayDevice();
+                device.Size = Marshal.SizeOf(typeof(DisplayDevice));
+                return deviceId = EnumDisplayDevices(DeviceName, 0, ref device, 1) ? device.DeviceID ?? String.Empty : String.Empty; // EDD_GET_DEVICE_INTERFACE_NAME
+            }
+        }
 
         public static List<DisplayMonitor> All()
         {
@@ -122,6 +136,17 @@ namespace DisplayWeave
                 Reserved1, Reserved2, PanningWidth, PanningHeight;
         }
 
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct DisplayDevice
+        {
+            public int Size;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceString;
+            public int StateFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceID;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceKey;
+        }
+
         private delegate bool MonitorEnumProc(IntPtr monitor, IntPtr dc, ref NativeRect area, IntPtr data);
 
         [DllImport("user32.dll")] private static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorEnumProc callback, IntPtr data);
@@ -129,6 +154,7 @@ namespace DisplayWeave
         [DllImport("user32.dll")] private static extern IntPtr MonitorFromRect(ref NativeRect area, uint flags);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
         [DllImport("shcore.dll")] private static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool EnumDisplayDevices(string device, uint index, ref DisplayDevice info, uint flags);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool EnumDisplaySettings(string device, int mode, ref DevMode settings);
     }
 }

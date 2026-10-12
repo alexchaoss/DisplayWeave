@@ -202,7 +202,7 @@ namespace DisplayWeave
                         if (!validLayout) { Disable(session); continue; }
                         // Hidden application windows do not appear in the eligible candidate list.
                         // Preference/rule changes must still disarm their existing native hooks now.
-                        ApplicationRule currentRule = MatchingRule(rules, session.Target);
+                        ApplicationRule currentRule = MatchingRule(rules, session.Target, layout);
                         Rectangle ignoredRegion;
                         bool ruleResolved = RegionGeometry.TryResolveRegion(currentRule, layout, out ignoredRegion);
                         RegionControlMode desired = AutomaticRegionPolicy.Decide(layout.AutomaticRegions, false,

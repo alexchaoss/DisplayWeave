@@ -342,6 +342,30 @@ try {
     $exe = Join-Path $root $pointer.executable
     $data = Join-Path $root 'data'
     if (-not [IO.File]::Exists($exe)) { throw 'The selected DisplayWeave version is missing. Run the installer again.' }
+    # A version that stopped twice without running a minute or exiting cleanly (the app then writes
+    # health\<version>.ok) goes back to the version it replaced. Bookkeeping problems never stop the launch.
+    try {
+        $previous = [string]$pointer.previousVersion
+        $health = Join-Path $root 'health'
+        if ($previous -match '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$' -and $previous -cne $pointer.version -and
+            -not [IO.File]::Exists((Join-Path $health ($pointer.version + '.ok')))) {
+            $starts = Join-Path $health ($pointer.version + '.starts')
+            $previousExe = Join-Path $root ('versions/' + $previous + '/DisplayWeave.exe')
+            if ([IO.File]::Exists($starts) -and @([IO.File]::ReadAllLines($starts)).Count -ge 2 -and [IO.File]::Exists($previousExe)) {
+                $text = [ordered]@{ version = $previous; executable = ('versions/' + $previous + '/DisplayWeave.exe'); dataDirectory = 'data' } | ConvertTo-Json
+                $temporary = $pointerPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+                [IO.File]::WriteAllText($temporary, $text + "`r`n", (New-Object Text.UTF8Encoding($false)))
+                [IO.File]::Replace($temporary, $pointerPath, [NullString]::Value)
+                [IO.File]::WriteAllText((Join-Path $health ($pointer.version + '.failed')), "Stopped twice within a minute of starting.`r`n")
+                $exe = $previousExe
+            }
+            else {
+                [void][IO.Directory]::CreateDirectory($health)
+                [IO.File]::AppendAllText($starts, (Get-Date -Format o) + "`r`n")
+            }
+        }
+    }
+    catch { }
     $info = New-Object Diagnostics.ProcessStartInfo
     $info.FileName = $exe
     $info.WorkingDirectory = [IO.Path]::GetDirectoryName($exe)
@@ -400,6 +424,11 @@ if ($Uninstall) {
         foreach ($file in $files) {
             Assert-PlainPath $file $false
             if ([IO.File]::Exists($file)) { [IO.File]::Delete($file) }
+        }
+        $healthDirectory = Join-Path $root 'health'
+        if ([IO.Directory]::Exists($healthDirectory)) {
+            Assert-PlainTree $healthDirectory
+            Remove-Item -LiteralPath $healthDirectory -Recurse -Force
         }
         $inUse = $false
         if ([IO.Directory]::Exists($versionsDirectory)) {
@@ -527,6 +556,7 @@ try {
     $executable = Join-Path $versionDirectory 'DisplayWeave.exe'
     $running = @(Get-DisplayWeaveProcesses $root $migrationDirectory)
     $alreadyCurrent = $false
+    $previous = $null
     if ($null -ne $oldPointer) {
         try {
             $previous = $utf8.GetString($oldPointer) | ConvertFrom-Json
@@ -549,7 +579,23 @@ try {
     }
     Write-AtomicBytes $launcherPath ($utf8.GetBytes($launcherSource))
     $launcherChanged = $true
-    $pointerText = [ordered]@{ version = $candidateVersion; executable = ('versions/' + $candidateVersion + '/DisplayWeave.exe'); dataDirectory = 'data' } | ConvertTo-Json
+    $pointer = [ordered]@{ version = $candidateVersion; executable = ('versions/' + $candidateVersion + '/DisplayWeave.exe'); dataDirectory = 'data' }
+    # The version this one replaces, so the launcher can go back to it if this one keeps failing to start.
+    if ($null -ne $previous) {
+        $oldVersion = if ($null -ne $previous.PSObject.Properties['version']) { [string]$previous.version } else { '' }
+        $replaced = if ($oldVersion -cne $candidateVersion) { $oldVersion }
+            elseif ($null -ne $previous.PSObject.Properties['previousVersion']) { [string]$previous.previousVersion } else { '' }
+        if ($replaced -match '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$' -and $replaced -cne $candidateVersion -and
+            [IO.File]::Exists((Join-Path $versionsDirectory ($replaced + '\DisplayWeave.exe')))) { $pointer.previousVersion = $replaced }
+    }
+    # A new install of this version starts with no failed starts counted; a version once given up stays skipped by updates.
+    Assert-PlainPath (Join-Path $root 'health') $true
+    foreach ($mark in @('.starts', '.ok')) {
+        $markPath = Join-Path $root ('health\' + $candidateVersion + $mark)
+        Assert-PlainPath $markPath $false
+        if ([IO.File]::Exists($markPath)) { [IO.File]::Delete($markPath) }
+    }
+    $pointerText = $pointer | ConvertTo-Json
     Write-AtomicBytes $pointerPath ($utf8.GetBytes($pointerText + [Environment]::NewLine))
     $pointerChanged = $true
 

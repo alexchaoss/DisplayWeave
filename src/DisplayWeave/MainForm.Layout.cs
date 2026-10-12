@@ -14,6 +14,7 @@ namespace DisplayWeave
         private readonly CheckBox workArea = new CheckBox();
         // The layout area to wait for after the display changed size, as a game in exclusive fullscreen does; empty when not waiting.
         private Rectangle displayWait = Rectangle.Empty;
+        private DateTime displayWaitSince;
         private readonly ListBox zoneList = new ListBox();
         private readonly NumericUpDown gridSpacing = new NumericUpDown();
         private readonly Label regionDimensions = new Label();
@@ -46,7 +47,7 @@ namespace DisplayWeave
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
             page.Controls.Add(layout);
-            layout.Controls.Add(Introduction("Arrange your screen", "Drag ruler pins to set your regions. Every region stays separate, with no gaps or overlaps."), 0, 0);
+            layout.Controls.Add(Introduction("Arrange your screen", "Drag ruler pins to set your regions; double-click a ruler to add a pin. Every region stays separate, with no gaps or overlaps."), 0, 0);
 
             var display = Table(3, 2);
             display.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -113,11 +114,9 @@ namespace DisplayWeave
             editor.Controls.Add(side, 1, 0);
             layout.Controls.Add(editor, 0, 2);
 
-            var presetRow = Table(4, 1);
-            presetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 68));
-            presetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
-            presetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 128));
-            presetRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            var presetRow = Table(8, 1);
+            foreach (int width in new[] { 64, 196, 120, 0, 60, 180, 84, 84 })
+                presetRow.ColumnStyles.Add(width == 0 ? new ColumnStyle(SizeType.Percent, 100) : new ColumnStyle(SizeType.Absolute, width));
             presetRow.Padding = new Padding(0, 8, 0, 4);
             presetRow.Controls.Add(Caption("Preset"), 0, 0);
             SetupCombo(presets); presets.AccessibleName = "Layout preset";
@@ -125,9 +124,7 @@ namespace DisplayWeave
             presets.SelectedIndex = 0;
             presetRow.Controls.Add(presets, 1, 0);
             presetRow.Controls.Add(Button("Use preset", delegate { if (presets.SelectedIndex <= 0) { notice = "Choose a preset first, or keep your current custom layout."; UpdateStatus(); return; } LayoutChanging(); rulerLayout.ApplyPreset(presets.SelectedIndex - 1, ScalePercent); ReloadZones(0); }), 2, 0);
-            var tip = Caption("Double-click a ruler to add a pin.");
-            tip.TextAlign = ContentAlignment.MiddleRight;
-            presetRow.Controls.Add(tip, 3, 0);
+            AddProfileRow(presetRow, 4);
             layout.Controls.Add(presetRow, 0, 3);
         }
 
@@ -268,13 +265,39 @@ namespace DisplayWeave
         private void ResumeWhenDisplayReturns()
         {
             DisplayMonitor monitor = DisplayMonitor.Find(settings.MonitorDevice);
-            if (monitor == null || (settings.UseWorkArea ? monitor.WorkingArea : monitor.Bounds) != displayWait) return;
+            if (monitor == null || (settings.UseWorkArea ? monitor.WorkingArea : monitor.Bounds) != displayWait)
+            {
+                // A few seconds give a game time to report its exclusive fullscreen after changing the display.
+                if (DateTime.UtcNow - displayWaitSince > TimeSpan.FromSeconds(3) && !ExclusiveFullscreenRunning()) DisplayChangedForGood();
+                return;
+            }
             Rectangle area = displayWait;
             EndDisplayWait();
             if (layoutDirty || !fullscreen.Paused) return;
             fullscreen.Resume();
             Report("The display is back to " + area.Width.ToString("N0") + " × " + area.Height.ToString("N0") + "; region handling resumed.");
         }
+
+        // The display changed without a game in exclusive fullscreen, such as a new resolution or monitor: the layout is
+        // read again for the display as it is now and stays paused for review. A renamed display is followed first.
+        private void DisplayChangedForGood()
+        {
+            displayWait = Rectangle.Empty;
+            string moved = layoutDirty ? null : service.RebindMonitor();
+            LoadMonitors();
+            ReloadZones(0);
+            RefreshRules();
+            Report(moved ?? "The display changed and no game is in exclusive fullscreen. Region handling is paused; review the layout, then Save layout.");
+        }
+
+        // Only a fullscreen game keeps the display changed while it runs; Windows says when one is in front.
+        private static bool ExclusiveFullscreenRunning()
+        {
+            int state;
+            return SHQueryUserNotificationState(out state) == 0 && (state == 3 || state == 2); // QUNS_RUNNING_D3D_FULL_SCREEN, QUNS_BUSY
+        }
+
+        [System.Runtime.InteropServices.DllImport("shell32.dll")] private static extern int SHQueryUserNotificationState(out int state);
 
         // Stops waiting for the display: the monitors and regions are read again for the display as it is now.
         private void EndDisplayWait()

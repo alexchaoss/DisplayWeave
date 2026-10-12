@@ -5,20 +5,21 @@ using System.Runtime.InteropServices;
 namespace DisplayWeave
 {
     // Calls back as soon as a top-level window becomes maximized, so an outside fit does not wait for
-    // the next timer tick. Out-of-context WinEvents: Windows posts them to this thread's message loop
+    // the next timer tick, and whenever a top-level window moves or resizes. Out-of-context WinEvents: Windows posts them to this thread's message loop
     // and nothing is loaded into other apps. Create it on a thread with a message loop.
     public sealed class MaximizeWatcher : IDisposable
     {
         private const uint EventObjectLocationChange = 0x800B, WinEventOutOfContext = 0x0000, WinEventSkipOwnProcess = 0x0002;
         private readonly HashSet<IntPtr> zoomed = new HashSet<IntPtr>();
-        private readonly Action maximized;
+        private readonly Action maximized, moved;
         // Kept in a field so the delegate outlives the native hook.
         private readonly WinEventProc callback;
         private IntPtr hook;
 
-        public MaximizeWatcher(Action maximized)
+        public MaximizeWatcher(Action maximized, Action moved = null)
         {
             this.maximized = maximized;
+            this.moved = moved;
             callback = OnEvent;
             hook = SetWinEventHook(EventObjectLocationChange, EventObjectLocationChange, IntPtr.Zero, callback, 0, 0,
                 WinEventOutOfContext | WinEventSkipOwnProcess);
@@ -28,6 +29,7 @@ namespace DisplayWeave
         {
             // OBJID_WINDOW of the window itself; carets, cursors and child objects move constantly.
             if (objectId != 0 || childId != 0 || window == IntPtr.Zero) return;
+            if (moved != null && GetAncestor(window, 2) == window) moved(); // GA_ROOT: a top-level window
             if (BecameMaximized(window, IsZoomed(window))) maximized();
         }
 
@@ -50,5 +52,6 @@ namespace DisplayWeave
             uint processId, uint threadId, uint flags);
         [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool UnhookWinEvent(IntPtr hook);
         [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsZoomed(IntPtr window);
+        [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr window, uint flags);
     }
 }

@@ -68,6 +68,14 @@ namespace DisplayWeave
             return true;
         }
 
+        // A window seen for the first time goes to this region when it is maximized or fullscreen, instead of the one
+        // under its restored place. Once the window was observed, its own place decides.
+        public void Prefer(string identityKey, string zoneId)
+        {
+            if (!String.IsNullOrEmpty(identityKey) && !String.IsNullOrEmpty(zoneId) && !observations.ContainsKey(identityKey))
+                observations.Add(identityKey, new Observation { ZoneId = zoneId });
+        }
+
         public void Forget(string identityKey) { if (identityKey != null) observations.Remove(identityKey); }
 
         public void Retain(ISet<string> identities)

@@ -43,6 +43,7 @@ namespace DisplayWeave
                 { error = ShellProcessProtection.RejectionMessage; return false; }
                 identity = new ApplicationIdentity { Handle = handle, ProcessId = pid, CreationTime = creation,
                     ExecutablePath = path.ToString(), WindowClass = cls, Is32Bit = !Environment.Is64BitOperatingSystem || wow64 };
+                if (StoreAppIdentity.IsHost(identity.ExecutablePath)) identity.AppId = StoreAppIdentity.Read(handle);
                 return true;
             }
             finally { CloseHandle(process); }
@@ -127,6 +128,7 @@ namespace DisplayWeave
         [DllImport("user32.dll", EntryPoint = "SetWindowLongW")] private static extern int SetWindowLong32(IntPtr handle, int index, int value);
         [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern IntPtr SetWindowLongPtr(IntPtr handle, int index, IntPtr value);
         [DllImport("user32.dll")] private static extern bool IsHungAppWindow(IntPtr handle);
+        [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
         [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr handle, uint flags);
         [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr handle, uint command);
         [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);

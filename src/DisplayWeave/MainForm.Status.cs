@@ -15,6 +15,7 @@ namespace DisplayWeave
         private readonly TextBox handledDetails = new TextBox();
         private string internalError = "";
         private string handledSignature;
+        private string loggedNotice, loggedUpdateNotice = "";
 
         private void BuildStatusPage(TabPage page)
         {
@@ -73,7 +74,8 @@ namespace DisplayWeave
             restart.Margin = new Padding(12, 24, 0, 26);
             access.Controls.Add(restart, 1, 0);
             body.Controls.Add(access, 0, 3);
-            body.Controls.Add(Introduction("Keyboard shortcuts", "Ctrl + Alt + Shift + 1…9     Force the active app into a region\nCtrl + Alt + Shift + 0          Release the active app\nCtrl + Alt + Shift + Backspace     Pause all handling"), 0, 4);
+            body.Controls.Add(Introduction("Shortcuts and Shift", "Make your own keyboard shortcuts on the Shortcuts tab; DisplayWeave has none of its own.\n" +
+                "Hold Shift while you maximize a window to leave it filling its display this once.\nWhat DisplayWeave did is in logs\\activity.log next to its settings."), 0, 4);
             body.Controls.Add(Introduction("Keep it in the tray", "X hides this window and keeps region handling running.\nDouble-click the tray icon or launch DisplayWeave again to reopen settings.\nExit DisplayWeave stops handling, restores controlled windows, and quits."), 0, 5);
             var startup = Table(1, 2);
             startup.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
@@ -123,6 +125,9 @@ namespace DisplayWeave
                 lastEngineError = fullscreen.LastMessage;
                 notice = fullscreen.LastMessage;
             }
+            // The engine logs its own messages.
+            if (notice != loggedNotice) { loggedNotice = notice; if (notice != fullscreen.LastMessage) ActivityLog.Write(notice); }
+            if (updateNotice != loggedUpdateNotice) { loggedUpdateNotice = updateNotice; ActivityLog.Write(updateNotice); }
             // A layout the engine cannot use stops all handling, so it outranks one app's failure.
             bool layoutProblem = !fullscreen.Paused && fullscreen.LayoutProblem.Length > 0;
             string failure = layoutProblem ? fullscreen.LayoutProblem : fullscreen.GetFailure(pickedIdentity);
@@ -147,7 +152,8 @@ namespace DisplayWeave
             if (fullscreen.LastInternalError.Length > 0) details += "\r\n\r\nLast app handling error (for a bug report):\r\n" + fullscreen.LastInternalError;
             if (status.Text != details) status.Text = details;
             if (trayPause != null) trayPause.Text = fullscreen.Paused ? "Resume region handling" : "Pause region handling";
-            if (Visible && pages.SelectedIndex == 2)
+            if (saveLayout != null) saveLayout.Text = displayWait.IsEmpty ? "Save layout" : "Use this display size";
+            if (Visible && pages.SelectedTab == statusPage)
             {
                 // The list only displays state; a problem showing it must not reach handling.
                 try { RefreshHandledApps(); }
@@ -169,7 +175,7 @@ namespace DisplayWeave
             string reason = error.Message.TrimEnd('.', ' ');
             Report(pause ? "Region handling paused after an internal error: " + reason + ". Apply saved rules to resume."
                 : "DisplayWeave hit an internal error: " + reason + ". Region handling continues.");
-            if (paused && !Visible) trayIcon.ShowBalloonTip(5000, "DisplayWeave paused region handling", error.Message, ToolTipIcon.Error);
+            if (paused && !Visible) ShowBalloon("DisplayWeave paused region handling", error.Message, ToolTipIcon.Error);
         }
 
         private static readonly string[] HandledStateNames = { "Starting", "Working", "Not active", "Fitted from outside", "Error", "Ready" };

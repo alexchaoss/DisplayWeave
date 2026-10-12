@@ -187,7 +187,7 @@ namespace DisplayWeave
                 Reject(delegate { ElevationRestart.ValidatePreviousProcessId(-1, 123); });
                 Reject(delegate { ElevationRestart.ValidatePreviousProcessId(123, 123); });
             });
-            test("Administrator mode copies helpers to a fresh folder and removes only this user's earlier copies", delegate
+            test("Administrator mode copies only listed, unchanged helpers to a fresh folder and removes only this user's earlier copies", delegate
             {
                 string temporary = Path.Combine(Path.GetTempPath(), "DisplayWeave-helpers-" + Guid.NewGuid().ToString("N"));
                 try
@@ -195,14 +195,28 @@ namespace DisplayWeave
                     string source = Path.Combine(temporary, "app"), root = Path.Combine(temporary, "protected");
                     Directory.CreateDirectory(Path.Combine(source, "native-v2-x64"));
                     File.WriteAllText(Path.Combine(source, "native-v2-x64", "RegionHookHost.exe"), "x64 helper");
+                    File.WriteAllText(Path.Combine(source, "native-v2-x64", "Unlisted.dll"), "not in the build");
+                    Dictionary<string, string> helpers = ElevationRestart.ReadHelperList(
+                        "5e0ad5d5d8bc8e4e84b2c87c4c8c4b6e2b7e1f1fa2c8e3a3a0b5b5a9e1c2d3f4  native-v2-x86/RegionHookHost.exe\n" +
+                        "not a line\n0000000000000000000000000000000000000000000000000000000000000000  ../escape.exe\n");
+                    Assert(helpers.Count == 1, "A malformed or escaping helper line was read.");
+                    using (System.Security.Cryptography.SHA256 sha = System.Security.Cryptography.SHA256.Create())
+                        helpers = ElevationRestart.ReadHelperList(BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes("x64 helper"))).Replace("-", "").ToLowerInvariant() +
+                            "  native-v2-x64/RegionHookHost.exe\n");
                     string earlier = Directory.CreateDirectory(Path.Combine(root, "S-1-5-21-7_old")).FullName;
                     string otherUser = Directory.CreateDirectory(Path.Combine(root, "S-1-5-21-70_old")).FullName;
-                    string copy = ElevationRestart.CopyHelpers(source, root, "S-1-5-21-7");
+                    string copy = ElevationRestart.CopyHelpers(source, root, "S-1-5-21-7", helpers);
                     Assert(File.ReadAllText(Path.Combine(copy, "native-v2-x64", "RegionHookHost.exe")) == "x64 helper" &&
-                        !Directory.Exists(Path.Combine(copy, "native-v2-x86")), "Helpers were not copied as they are.");
+                        !File.Exists(Path.Combine(copy, "native-v2-x64", "Unlisted.dll")) &&
+                        !Directory.Exists(Path.Combine(copy, "native-v2-x86")), "Helpers were not copied as listed.");
                     Assert(!Directory.Exists(earlier) && Directory.Exists(otherUser), "Only this user's earlier copies may be removed.");
                     ElevationRestart.RemoveHelpers(copy);
                     Assert(!Directory.Exists(copy) && Directory.Exists(root), "The copy was not removed, or a folder still in use was.");
+                    File.WriteAllText(Path.Combine(source, "native-v2-x64", "RegionHookHost.exe"), "swapped helper");
+                    bool refused = false;
+                    try { ElevationRestart.CopyHelpers(source, root, "S-1-5-21-7", helpers); }
+                    catch (IOException) { refused = true; }
+                    Assert(refused && Directory.GetDirectories(root, "S-1-5-21-7_*").Length == 0, "A changed helper was copied for administrator mode.");
                 }
                 finally { if (Directory.Exists(temporary)) Directory.Delete(temporary, true); }
             });
@@ -213,6 +227,29 @@ namespace DisplayWeave
                 Assert(Updater.Newest("0.5.5-preview", new string[] { "v0.5.5-preview", "v0.5.4", " v0.5.5-preview " }) == null, "Offered the current or an older version.");
                 Assert(Updater.Newest("0.6.0-preview", new string[] { "v0.6.0" }) == "0.6.0", "A final release did not replace its preview.");
                 Assert(Updater.Newest("not-a-version", new string[] { "v9.9.9" }) == null, "An unparsable current version must never update.");
+                Assert(Updater.Newest("0.5.5-preview", new string[] { "v0.5.7-preview", "v0.5.6-preview" }, new HashSet<string> { "0.5.7-preview" }) == "0.5.6-preview",
+                    "A version that failed here was offered again.");
+            });
+            test("Going back points the launcher at the previous version and skips this one in updates", delegate
+            {
+                string root = Path.Combine(Path.GetTempPath(), "DisplayWeave-goback-" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    Directory.CreateDirectory(Path.Combine(root, @"versions\0.5.12-preview"));
+                    File.WriteAllText(Path.Combine(root, @"versions\0.5.12-preview\DisplayWeave.exe"), "");
+                    File.WriteAllText(Path.Combine(root, "current.json"), "{\"version\":\"0.5.13-preview\"," +
+                        "\"executable\":\"versions/0.5.13-preview/DisplayWeave.exe\",\"dataDirectory\":\"data\",\"previousVersion\":\"0.5.12-preview\"}");
+                    Assert(Updater.PreviousVersion(root, "0.5.13-preview") == "0.5.12-preview", "The previous version was not found.");
+                    Assert(Updater.PreviousVersion(root, "0.5.12-preview") == null, "The running version was offered as the previous one.");
+                    Updater.GoBack(root, "0.5.13-preview", "0.5.12-preview");
+                    Dictionary<string, object> pointer = (Dictionary<string, object>)new System.Web.Script.Serialization.JavaScriptSerializer().DeserializeObject(
+                        File.ReadAllText(Path.Combine(root, "current.json")));
+                    Assert((string)pointer["version"] == "0.5.12-preview" && (string)pointer["executable"] == "versions/0.5.12-preview/DisplayWeave.exe" &&
+                        (string)pointer["dataDirectory"] == "data" && !pointer.ContainsKey("previousVersion"), "The pointer is not the launcher's format for the previous version.");
+                    Assert(Updater.FailedVersions(root).Contains("0.5.13-preview"), "The version gone back from would be offered again.");
+                    Reject(delegate { Updater.GoBack(root, @"..\x", "0.5.12-preview"); });
+                }
+                finally { Directory.Delete(root, true); }
             });
             test("Update checks read only published tags from GitHub's release list", delegate
             {
@@ -297,9 +334,10 @@ namespace DisplayWeave
                 string game = @"D:\Some Games\Secret Title\SecretGame.exe";
                 List<string> paths = new List<string> { game };
                 string raw = "Helper failed for " + game + " (SecretGame.exe) in " + profile + @"\AppData\Local\DisplayWeave\data, user " + Environment.UserName +
-                    " on " + Environment.MachineName + @", SID S-1-5-21-1111111111-2222222222-3333333333-1001, other file E:\Tools Folder\other tool.exe and E:\plain\folder.";
+                    " on " + Environment.MachineName + @", SID S-1-5-21-1111111111-2222222222-3333333333-1001, other file E:\Tools Folder\other tool.exe and E:\plain\folder." +
+                    " Fitted the OldGame.exe window.";
                 string hidden = DiagnosticReport.Scrub(raw, paths, false);
-                foreach (string leak in new[] { "Some Games", "Secret", profile, "S-1-5-21", "Tools Folder", "other tool", @"E:\plain" })
+                foreach (string leak in new[] { "Some Games", "Secret", profile, "S-1-5-21", "Tools Folder", "other tool", @"E:\plain", "OldGame" })
                     Assert(hidden.IndexOf(leak, StringComparison.OrdinalIgnoreCase) < 0, "The report kept " + leak + ": " + hidden);
                 foreach (string name in new[] { Environment.UserName, Environment.MachineName })
                     if (name.Length > 2) Assert(!Regex.IsMatch(hidden, @"\b" + Regex.Escape(name) + @"\b", RegexOptions.IgnoreCase), "The report kept a user or computer name: " + hidden);

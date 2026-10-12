@@ -12,9 +12,9 @@ using Microsoft.Win32;
 
 namespace DisplayWeave
 {
-    // A Markdown summary for GitHub issues: versions, displays, scaling, graphics drivers, the layout and
-    // handling state. It never holds window titles, paths, user or computer names, SIDs or monitor serials;
-    // app file names appear only when the user ticks the box.
+    // A Markdown summary for GitHub issues: versions, displays, scaling, graphics drivers, the layout, handling
+    // state and the end of the activity log. It never holds window titles, paths, user or computer names, SIDs or
+    // monitor serials; app file names appear only when the user ticks the box.
     internal static class DiagnosticReport
     {
         private const string NewIssue = "https://github.com/alexchaoss/DisplayWeave/issues/new?template=bug_report.yml";
@@ -82,6 +82,9 @@ namespace DisplayWeave
                 if (!String.IsNullOrWhiteSpace(note) && !messages.Contains(note.Trim())) messages.Add(note.Trim());
             if (messages.Count > 0)
                 text.Append("\n#### Recent messages\n\n```text\n").Append(Scrub(String.Join("\n\n", messages), appPaths, includeAppNames).Replace("```", "'''")).Append("\n```\n");
+            List<string> activity = ActivityLog.Tail(40);
+            if (activity.Count > 0)
+                text.Append("\n#### Recent activity\n\n```text\n").Append(Scrub(String.Join("\n", activity), appPaths, includeAppNames).Replace("```", "'''")).Append("\n```\n");
             return text.ToString();
         }
 
@@ -102,7 +105,9 @@ namespace DisplayWeave
             text = Regex.Replace(text, @"S-1-5-21(-\d+){1,4}", "<SID>");
             // Paths outside the profile: up to .exe or .dll when they have one, so folder names with spaces go too.
             text = ReplaceText(text, @"[A-Za-z]:\\[^""'\r\n<>|]*?\.(?:exe|dll)\b", "<path>");
-            return ReplaceText(text, @"[A-Za-z]:\\[^\s""'<>|]*", "<path>");
+            text = ReplaceText(text, @"[A-Za-z]:\\[^\s""'<>|]*", "<path>");
+            // The activity log names apps that are no longer handled, so no known path covers them.
+            return includeAppNames ? text : ReplaceText(text, @"(?<![\w.-])[\w.-]+\.exe\b", "<app>");
         }
 
         internal static void ShowDialog(IWin32Window owner, Font font, Func<bool, string> build)

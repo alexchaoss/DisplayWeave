@@ -4,6 +4,66 @@ Commands recorded below before October 10, 2026 use the old root-level script pa
 
 The virtual-display projection prototype and its evidence moved to the `prototype` branch on October 11, 2026. Entries below that mention prototype or projection checks record what was run at the time.
 
+## Shortcuts, profiles, recovery and update safety (0.6.0, October 12, 2026)
+
+Changes on top of `e5e05cf`; x64, same computer. The checks below ran with `version.txt` still at
+0.5.12-preview; the 0.6.0 run is recorded under Results.
+
+- **Activity log** (`ActivityLog`): engine messages, layout problems, notices and update events, one
+  line each, in `data\logs\activity.log` (rolled at 1 MB). The Diagnostic report adds the
+  last 40 lines, scrubbed; without **Include app file names**, any `name.exe` left in the text is
+  replaced too.
+- **Timer**: `WindowManager.ListWindows` measured 0.6 ms with 3 app windows (about 0.2 ms per
+  window, 100 calls), so no identity cache was added. The timer runs every second while the window
+  is hidden and nothing moves, and every 250 ms for 2 s after any top-level window moves.
+- **Rules**: window classes compare without per-run parts (GUIDs, the WinForms suffix, MFC/ATL
+  addresses); Store apps (`ApplicationFrameHost.exe`) also compare their AppUserModelID; each rule
+  records the day it last applied (rules saved at most once a day for it). A Store-app rule saved
+  before this matches no Store app now.
+- **Display renaming**: the layout stores the monitor's device path and size when saved. At start,
+  on a lasting display change and on a profile switch it follows that device path, or, when the
+  named display is gone, the only display of the same size.
+- **Borderless journal**: windows shown without their title bar are listed in
+  `data\borderless.journal` while they are; the next start takes them over (their rule keeps them,
+  otherwise the title bar returns) and a fatal error restores them.
+- **Display change**: the wait for the display to return applies only while Windows reports a
+  fullscreen app in front (`SHQueryUserNotificationState` 3 or 2); otherwise, after 3 s, the change
+  is kept and the layout is read again, paused. While waiting, Save layout reads **Use this display size**.
+- **Shift** while maximizing leaves the window filling its display until it is restored.
+- **Shortcuts tab**: user-made shortcuts only (fit, borderless, force into region N, release,
+  pause/resume, switch profile) in `shortcuts.xml`; the built-in Ctrl+Alt+Shift shortcuts are gone.
+- **One-click rule**: when a borderless game resizes itself back, a notification offers a Borderless
+  in region rule for its region, once per app per session; clicking it re-checks the window first.
+- **Remembered regions** (`app-regions.xml`, 256 apps): an app that starts maximized or fullscreen
+  goes to the region automatic handling last fitted it into, per profile.
+- **Layout profiles**: `data\profiles\profile-<name>.xml`; rules carry a profile (Ignore and older
+  rules apply in all); New copies the layout and its rules.
+- **Updates**: the setup is held open and re-verified before it starts; `current.json` records
+  `previousVersion`; the launcher gives up a version after two starts without `health\<version>.ok`
+  (written after a minute or on a clean exit); updates skip given-up versions; the tray offers
+  **Go back to DisplayWeave <version>**.
+- **Administrator helpers**: `build.ps1` embeds `helpers.sha256` for the six native files;
+  `CopyHelpers` copies only those and checks each copy's hash in Program Files. `release.ps1` and CI
+  now build the native files before the app.
+
+Results:
+
+- `.\scripts\release.ps1` (no `-Publish`, the local 0.5.12 release files restored afterwards):
+  layout 20, rules 66, automatic 14, lifecycle 34 (134 passed, 0 failed), native policy and IPC on
+  x64 and x86, installer 21 of 21 (new: the launcher goes back after two failed starts, a clean run
+  is never given up, reinstalling resets the count), setup 6 of 6. The embedded helper list matched
+  the native build's hashes.
+- Again with `version.txt` at 0.6.0 (same source): layout 20, rules 66, automatic 14, lifecycle 34,
+  native policy and IPC on x64 and x86, installer 21 of 21, setup 6 of 6. Setup SHA-256
+  `c007baf5…b9e4b5` (local build; CI builds the published one).
+- Interface captured with the in-process harness (an executable filter that matches nothing): the
+  Layout profile row, the Shortcuts tab and its dialog, the saved-rules **Last used** column and
+  Status & help.
+- Not covered: any live handling of a real app with this build; the rule offer, journal adoption
+  and returning a window to its monitor (the engine never inspects its own process, so self-tests
+  cannot re-inspect a test window); a real display renaming; an administrator start; a real update
+  and rollback; the Store app ID on a real Store app window.
+
 ## Source split into files under 500 lines (after 0.5.12-preview, October 12, 2026)
 
 Changes on top of `7131b7d`; x64, same computer. No behavior change intended.

@@ -34,11 +34,12 @@ jobs:
       - name: Fetch the verified Zig toolchain
         run: ./scripts/fetch-tools.ps1
 
-      - name: Build the Windows application
-        run: ./scripts/build.ps1
-
       - name: Build x64 and x86 native components
         run: ./scripts/build-native.ps1 -Architecture all
+
+      # After the native components: the app embeds their hashes for administrator mode.
+      - name: Build the Windows application
+        run: ./scripts/build.ps1
 
       # These test modes do not open application windows, inject hooks, or change
       # the desktop. Monitor/window rendering tests require an interactive desktop.

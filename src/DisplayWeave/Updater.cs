@@ -42,8 +42,8 @@ namespace DisplayWeave
             return b.Groups[4].Success.CompareTo(a.Groups[4].Success);
         }
 
-        // Returns the newest release version from the tag list when it is newer than current.
-        internal static string Newest(string current, IEnumerable<string> tags)
+        // Returns the newest release version from the tag list when it is newer than current; skipped versions failed here before.
+        internal static string Newest(string current, IEnumerable<string> tags, ICollection<string> skipped = null)
         {
             string best = null;
             foreach (string tag in tags)
@@ -51,7 +51,8 @@ namespace DisplayWeave
                 string version = tag.Trim();
                 if (!version.StartsWith("v", StringComparison.Ordinal)) continue; // prototype-v* tags are another app
                 version = version.Substring(1);
-                if (ReleaseVersion.IsMatch(version) && Compare(version, current) > 0 && (best == null || Compare(version, best) > 0)) best = version;
+                if (ReleaseVersion.IsMatch(version) && Compare(version, current) > 0 && (best == null || Compare(version, best) > 0) &&
+                    (skipped == null || !skipped.Contains(version))) best = version;
             }
             return best;
         }
@@ -73,11 +74,11 @@ namespace DisplayWeave
         }
 
         // Returns the signed and checksum-verified setup of a newer release, or null when this copy is current.
-        internal static string DownloadNewer(string current, out string version)
+        internal static string DownloadNewer(string current, ICollection<string> skipped, out string version)
         {
             // Without a target-framework attribute, .NET Framework offers only TLS 1.0, which GitHub refuses.
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
-            version = Newest(current, ReleaseTags(Encoding.UTF8.GetString(Download("https://api.github.com/repos/" + Repository + "/releases?per_page=50", 4 << 20))));
+            version = Newest(current, ReleaseTags(Encoding.UTF8.GetString(Download("https://api.github.com/repos/" + Repository + "/releases?per_page=50", 4 << 20))), skipped);
             if (version == null) return null;
             string directory = Path.Combine(Path.GetTempPath(), "DisplayWeaveUpdate");
             if (Directory.Exists(directory)) Directory.Delete(directory, true);
@@ -126,6 +127,45 @@ namespace DisplayWeave
             using (SHA256 sha = SHA256.Create())
             using (FileStream stream = File.OpenRead(setup))
                 return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant() == line.Groups[1].Value;
+        }
+
+        // Versions given up on this computer: the launcher went back from them after two failed starts, or the user did.
+        internal static HashSet<string> FailedVersions(string root)
+        {
+            HashSet<string> failed = new HashSet<string>(StringComparer.Ordinal);
+            string health = Path.Combine(root, "health");
+            if (Directory.Exists(health))
+                foreach (string file in Directory.GetFiles(health, "*.failed")) failed.Add(Path.GetFileNameWithoutExtension(file));
+            return failed;
+        }
+
+        // The version installed before this one, which the installer records in current.json, while its files are still there.
+        internal static string PreviousVersion(string root, string current)
+        {
+            try
+            {
+                Dictionary<string, object> pointer = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(Path.Combine(root, "current.json"))) as Dictionary<string, object>;
+                object value;
+                string previous = pointer != null && pointer.TryGetValue("previousVersion", out value) ? value as string : null;
+                return previous != null && ReleaseVersion.IsMatch(previous) && previous != current &&
+                    File.Exists(Path.Combine(root, "versions", previous, "DisplayWeave.exe")) ? previous : null;
+            }
+            catch (IOException) { return null; }
+            catch (UnauthorizedAccessException) { return null; }
+            catch (ArgumentException) { return null; } // not JSON
+            catch (InvalidOperationException) { return null; }
+        }
+
+        // Points the launcher back at the previous version. The current one is marked failed, so updates skip it.
+        internal static void GoBack(string root, string current, string previous)
+        {
+            if (!ReleaseVersion.IsMatch(current) || !ReleaseVersion.IsMatch(previous)) throw new ArgumentException("Not a DisplayWeave version.");
+            string health = Directory.CreateDirectory(Path.Combine(root, "health")).FullName;
+            File.WriteAllText(Path.Combine(health, current + ".failed"), "Gone back to " + previous + " from the tray menu.\r\n");
+            string pointer = Path.Combine(root, "current.json"), temporary = pointer + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            File.WriteAllText(temporary, "{\r\n    \"version\":  \"" + previous + "\",\r\n    \"executable\":  \"versions/" + previous +
+                "/DisplayWeave.exe\",\r\n    \"dataDirectory\":  \"data\"\r\n}\r\n", new UTF8Encoding(false));
+            File.Replace(temporary, pointer, null);
         }
 
         // GitHub's API refuses requests without a User-Agent. Release files arrive through a redirect

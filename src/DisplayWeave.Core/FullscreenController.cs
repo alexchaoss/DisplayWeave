@@ -35,8 +35,18 @@ namespace DisplayWeave
 
         private DateTime nextAutomaticLaunch = DateTime.MinValue;
         private bool disposed;
+        // After the first tick that handled windows: the windows seen then were already open at startup.
+        private bool startupTickDone;
+        // A rule's last-used date changed; RegionService saves the rules and clears it.
+        public bool RulesUsed { get; set; }
         public bool Paused { get; private set; }
-        public string LastMessage { get; private set; }
+        private string lastMessage = String.Empty;
+        // Each new message also goes to the activity log.
+        public string LastMessage
+        {
+            get { return lastMessage; }
+            private set { if (value != lastMessage) ActivityLog.Write(value); lastMessage = value ?? String.Empty; }
+        }
         public string LastFailure { get { return failureHistory.Latest; } }
         // Why the latest tick could not use the layout at all; empty when it could.
         public string LayoutProblem { get; private set; }
@@ -64,7 +74,7 @@ namespace DisplayWeave
         // Test scope only: automatic preparation is limited to this exact executable path when set.
         public string AutomaticExecutableFilter { get; set; }
 
-        public FullscreenController() { LastMessage = LayoutProblem = LastInternalError = String.Empty; }
+        public FullscreenController() { LayoutProblem = LastInternalError = String.Empty; }
 
         // Apps with a helper, a maximized fit, a broken rule or a recorded failure. Call from the Tick thread.
         public List<HandledApp> HandledApps()
@@ -99,21 +109,26 @@ namespace DisplayWeave
             bool validLayout = RegionGeometry.TryResolveLayout(layout, out layoutRegions);
             string layoutKey = null;
             if (validLayout) validLayout = HelperProtocol.TrySerializeRegions(layoutRegions, layoutRegions[0], out layoutKey);
-            LayoutProblem = String.Empty;
+            string problem = String.Empty;
             if (!validLayout)
             {
                 string device = layout == null ? String.Empty : layout.MonitorDevice;
                 List<string> displays = new List<string>();
                 foreach (DisplayMonitor monitor in DisplayMonitor.All()) displays.Add(monitor.DeviceName);
-                LayoutProblem = displays.Exists(delegate(string name) { return String.Equals(name, device, StringComparison.OrdinalIgnoreCase); })
+                problem = displays.Exists(delegate(string name) { return String.Equals(name, device, StringComparison.OrdinalIgnoreCase); })
                     ? "No app is handled: the regions do not fit display " + device + ". Open Layout, review the regions, then Save layout."
                     : "No app is handled: the layout's display " + device + " was not found; Windows reports " + String.Join(", ", displays) +
                         ". Open Layout, choose a display, then Save layout. Another display or region tool can rename displays; exit it first.";
             }
+            if (problem.Length > 0 && problem != LayoutProblem) ActivityLog.Write(problem);
+            LayoutProblem = problem;
             TickSessions(rules, layout, validLayout, layoutRegions, layoutKey);
-            if (Paused || !validLayout || windows == null) return;
-            ReturnUnruledMaximized(rules, layout);
-            TickWindows(windows, rules, layout, layoutRegions);
+            if (!Paused && validLayout && windows != null)
+            {
+                ReturnUnruledMaximized(rules, layout);
+                TickWindows(windows, rules, layout, layoutRegions);
+            }
+            SaveJournal();
         }
 
         // Decides, for each listed window, whether it is left alone, fitted from outside or handled by its helper.
@@ -147,7 +162,7 @@ namespace DisplayWeave
                     if (existing != null && existing.AwaitingExitOutput) continue;
                     // Native hooks target one main window per process; never retarget a secondary window implicitly.
                     if (existing != null && existing.Target.Key != identity.Key) continue;
-                    ApplicationRule rule = MatchingRule(rules, identity);
+                    ApplicationRule rule = MatchingRule(rules, identity, layout);
                     Rectangle region;
                     bool resolved = RegionGeometry.TryResolveRegion(rule, layout, out region);
                     RegionControlMode mode = AutomaticRegionPolicy.Decide(layout.AutomaticRegions, Paused,
@@ -197,8 +212,10 @@ namespace DisplayWeave
                         continue;
                     }
                     string zoneId;
+                    if (expanded) PreferRememberedRegion(identity, layout);
                     if (!automaticPolicy.Observe(identity.Key, currentBounds, restoredBounds, expanded, false,
                         area, layout.Zones, out zoneId, out region)) { Disable(existing); continue; }
+                    if (expanded && !shiftSkipped.Contains(identity.Key)) RememberRegion(identity, layout, zoneId);
                     // Automatic handling never loads the component: it fits maximized and borderless fullscreen windows from
                     // outside. Only the live hook fixtures, scoped to one executable, still load it automatically.
                     if (String.IsNullOrWhiteSpace(AutomaticExecutableFilter) || (existing == null && OutsideFitOnly(identity)))
@@ -217,6 +234,8 @@ namespace DisplayWeave
             // until the session actually ends, instead of selecting from fullscreen bounds.
             foreach (HelperSession session in sessions.Values) observed.Add(session.Target.Key);
             automaticPolicy.Retain(observed);
+            shiftSkipped.IntersectWith(observed);
+            startupTickDone = true;
         }
 
         private bool AutomaticCandidate(ApplicationIdentity identity)
@@ -258,17 +277,27 @@ namespace DisplayWeave
                 String.Equals(identity.ExecutablePath, AutomaticExecutableFilter, StringComparison.OrdinalIgnoreCase);
         }
 
-        private static ApplicationRule MatchingRule(ApplicationRules rules, ApplicationIdentity identity)
+        // Ignore wins; then a rule for the active layout profile; then one for every profile.
+        private ApplicationRule MatchingRule(ApplicationRules rules, ApplicationIdentity identity, LayoutSettings layout)
         {
             if (rules == null || rules.Rules == null) return null;
-            ApplicationRule force = null;
+            string profile = layout == null ? null : layout.ProfileName;
+            ApplicationRule forProfile = null, forAll = null;
             foreach (ApplicationRule rule in rules.Rules)
             {
-                if (rule == null || !rule.Matches(identity)) continue;
-                if (rule.Action == ApplicationAction.Ignore) return rule;
-                if (force == null) force = rule;
+                if (rule == null || !rule.Matches(identity) || !rule.AppliesTo(profile)) continue;
+                if (rule.Action == ApplicationAction.Ignore) return Used(rule);
+                if (String.IsNullOrEmpty(rule.ProfileName)) { if (forAll == null) forAll = rule; }
+                else if (forProfile == null) forProfile = rule;
             }
-            return force;
+            return Used(forProfile ?? forAll);
+        }
+
+        // Dates only, so the rules are saved at most once a day per rule.
+        private ApplicationRule Used(ApplicationRule rule)
+        {
+            if (rule != null && rule.LastMatched.Date != DateTime.UtcNow.Date) { rule.LastMatched = DateTime.UtcNow; RulesUsed = true; }
+            return rule;
         }
 
         // ownGuidance: the detail already says what to do, so no generic retry advice is added.
@@ -348,6 +377,12 @@ namespace DisplayWeave
             released.Remove(identity.ProcessKey);
             failed.Remove(identity.Key);
             faulted.Remove(identity.Key);
+        }
+
+        // After a layout profile switch: every window picks its region again in the new layout.
+        public void ForgetRegions()
+        {
+            automaticPolicy.Retain(new HashSet<string>());
         }
 
         public void Dispose()

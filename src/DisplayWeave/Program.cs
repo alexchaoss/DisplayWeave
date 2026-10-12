@@ -37,10 +37,14 @@ namespace DisplayWeave
                 return AutomaticControllerIntegration.Run(Path.GetFullPath(args[1]), Path.GetFullPath(args[2]));
             if (args.Length >= 3 && args[0] == "--verify-monitor-controller")
                 return AutomaticControllerIntegration.RunMonitor(Path.GetFullPath(args[1]), Path.GetFullPath(args[2]));
-            // An error on a background thread ends the process whatever this does, so at least say why.
-            // The helpers see their input close and switch their hooks off.
+            // An error on a background thread ends the process whatever this does, so at least say why and give
+            // windows shown borderless their title bar back. The helpers see their input close and switch their hooks off.
+            string journal = null;
             AppDomain.CurrentDomain.UnhandledException += delegate(object sender, UnhandledExceptionEventArgs e)
             {
+                ActivityLog.Write("DisplayWeave stopped after an unexpected error: " + e.ExceptionObject);
+                try { if (journal != null) BorderlessJournal.RestoreAll(journal); }
+                catch (Exception) { } // the next start takes them over instead
                 MessageBox.Show("DisplayWeave stopped after an unexpected error.\n\n" + e.ExceptionObject, "DisplayWeave stopped",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             };
@@ -51,6 +55,7 @@ namespace DisplayWeave
                 MessageBox.Show(ex.Message, "DisplayWeave could not start", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return 2;
             }
+            journal = Path.Combine(Path.GetFullPath(options.DataDirectory ?? AppDomain.CurrentDomain.BaseDirectory), "borderless.journal");
             if (options.ExitForUpdate)
             {
                 PostMessage(new IntPtr(0xffff), (uint)ExitForUpdateMessage, IntPtr.Zero, IntPtr.Zero);
@@ -88,7 +93,8 @@ namespace DisplayWeave
                 string helpers = null;
                 if (ElevationRestart.IsElevated())
                 {
-                    try { helpers = ElevationRestart.CopyHelpers(AppDomain.CurrentDomain.BaseDirectory, ElevationRestart.HelperRoot, ElevationRestart.UserSid()); }
+                    try { helpers = ElevationRestart.CopyHelpers(AppDomain.CurrentDomain.BaseDirectory, ElevationRestart.HelperRoot, ElevationRestart.UserSid(),
+                        ElevationRestart.EmbeddedHelpers()); }
                     catch (Exception ex)
                     {
                         if (!(ex is IOException) && !(ex is UnauthorizedAccessException)) throw;

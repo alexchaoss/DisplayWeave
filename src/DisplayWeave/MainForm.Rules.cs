@@ -20,6 +20,7 @@ namespace DisplayWeave
         private readonly TextBox ruleExplanation = new TextBox();
         private readonly Label ruleHint = new Label();
         private Button saveRule, restoreApp, removeRule;
+        private readonly Label savedRulesHeading = Heading("Saved rules");
         private bool syncingRegion;
 
         private void BuildRulesPage(TabPage page)
@@ -132,7 +133,7 @@ namespace DisplayWeave
             saved.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
             saved.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 172));
             foreach (int height in new[] { 34, 112, 26, 46 }) saved.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
-            AddWide(saved, Heading("Saved rules"), 0);
+            AddWide(saved, savedRulesHeading, 0);
             savedRules.View = View.Details;
             savedRules.FullRowSelect = true;
             savedRules.HideSelection = false;
@@ -143,7 +144,8 @@ namespace DisplayWeave
             savedRules.Columns.Add("App", 200);
             savedRules.Columns.Add("Region", 160);
             savedRules.Columns.Add("How", 190);
-            savedRules.Columns.Add("Window class", 280);
+            savedRules.Columns.Add("Window class", 200);
+            savedRules.Columns.Add("Last used", 110);
             AddWide(saved, savedRules, 1);
             savedRuleDetails.Dock = DockStyle.Fill; savedRuleDetails.AutoEllipsis = true;
             savedRuleDetails.ForeColor = Color.FromArgb(75, 89, 110);
@@ -258,8 +260,12 @@ namespace DisplayWeave
             updating = true;
             savedRules.BeginUpdate();
             savedRules.Items.Clear();
+            // Rules of other layout profiles name their regions, which this layout may not have.
             foreach (ApplicationRule rule in rules.Rules)
-                savedRules.Items.Add(new ListViewItem(new[] { rule.DisplayName, RuleRegionName(rule), ApplicationRule.ActionName(rule.Action), rule.WindowClass }) { Tag = rule });
+                if (rule.AppliesTo(settings.ProfileName))
+                    savedRules.Items.Add(new ListViewItem(new[] { rule.DisplayName, RuleRegionName(rule), ApplicationRule.ActionName(rule.Action), rule.WindowClass,
+                        rule.LastMatched == DateTime.MinValue ? "Not yet" : rule.LastMatched.Date == DateTime.UtcNow.Date ? "Today" : rule.LastMatched.ToLocalTime().ToShortDateString() }) { Tag = rule });
+            savedRulesHeading.Text = service.Profiles().Count > 1 ? "Saved rules for layout profile " + settings.ProfileName : "Saved rules";
             // The newest rule is last; select it so its details show.
             if (savedRules.Items.Count > 0) savedRules.Items[savedRules.Items.Count - 1].Selected = true;
             savedRules.EndUpdate();

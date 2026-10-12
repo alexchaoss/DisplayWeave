@@ -8,8 +8,8 @@ using System.Windows.Forms;
 
 namespace DisplayWeave
 {
-    // The settings window and tray icon. This file holds startup, the handling timer, the tray, hotkeys and exit;
-    // each tab and the update check are in their own MainForm.*.cs file. Actions call RegionService.
+    // The settings window and tray icon. This file holds startup, the handling timer, the tray and exit; each tab,
+    // layout profiles and the update check are in their own MainForm.*.cs file. Actions call RegionService.
     public sealed partial class MainForm : Form
     {
         private readonly string dataDirectory;
@@ -26,6 +26,11 @@ namespace DisplayWeave
         private readonly Timer timer = new Timer();
         private MaximizeWatcher maximizeWatcher;
         private bool ticking;
+        // Ticks every 250 ms until then, after a window moved; otherwise once a second while this window is hidden.
+        private DateTime fastTicksUntil;
+        // A Borderless in region rule offered in a notification, applied if the user clicks it; one offer per app per session.
+        private HandledApp offeredRule;
+        private readonly HashSet<string> offeredApps = new HashSet<string>(StringComparer.Ordinal);
         private readonly List<int> registeredHotkeys = new List<int>();
         private bool updating;
         private string notice = "Apps automatically use their current region when maximized or fullscreen. Use a manual rule if needed.";
@@ -36,6 +41,8 @@ namespace DisplayWeave
         {
             this.dataDirectory = Path.GetFullPath(dataDirectory ?? AppDomain.CurrentDomain.BaseDirectory);
             this.startInTray = startInTray;
+            ActivityLog.Open(this.dataDirectory);
+            ActivityLog.Write("DisplayWeave " + Program.Version + " started" + (ElevationRestart.IsElevated() ? " as administrator." : "."));
             service = new RegionService(this.dataDirectory, automaticExecutableFilter);
             settings = service.Layout;
             rules = service.Rules;
@@ -60,13 +67,18 @@ namespace DisplayWeave
             ReloadZones(0);
             RefreshWindows();
             RefreshRules();
+            RefreshProfiles();
             InitializeTray();
             if (!layoutDirty) SetLayoutState("Saved layout loaded · " + settings.Zones.Count + " regions · " + settings.GridStepPixels + " px grid", false);
             timer.Interval = 250;
             timer.Tick += delegate { TickNow(); };
             timer.Start();
             // A window fitted from outside first fills the display; fit it as soon as it maximizes, not on the next tick.
-            maximizeWatcher = new MaximizeWatcher(TickNow);
+            maximizeWatcher = new MaximizeWatcher(TickNow, delegate
+            {
+                fastTicksUntil = DateTime.UtcNow.AddSeconds(2);
+                if (timer.Interval != 250) timer.Interval = 250;
+            });
             // Administrator mode never updates: the setup would run elevated from a user-writable folder.
             if (installRoot != null && String.IsNullOrWhiteSpace(automaticExecutableFilter) && !ElevationRestart.IsElevated())
             {
@@ -122,16 +134,51 @@ namespace DisplayWeave
             trayPause = new ToolStripMenuItem("Pause region handling");
             trayPause.Click += delegate { if (fullscreen.Paused) ResumeHandling(); else RestoreAll(); };
             trayMenu.Items.Add(trayPause);
+            trayProfiles = new ToolStripMenuItem("Layout profile");
+            trayMenu.Items.Add(trayProfiles);
+            trayMenu.Opening += delegate { RefreshTrayProfiles(); RefreshGoBack(); };
+            RefreshTrayProfiles();
             trayUpdate = new ToolStripMenuItem("Install update now") { Visible = false };
             trayUpdate.Click += delegate { if (updateSetup != null) InstallUpdate(); };
             trayMenu.Items.Add(trayUpdate);
+            trayGoBack = new ToolStripMenuItem { Visible = false };
+            trayGoBack.Click += delegate { GoBack(); };
+            trayMenu.Items.Add(trayGoBack);
             trayMenu.Items.Add(new ToolStripSeparator());
             trayMenu.Items.Add("Exit DisplayWeave", null, delegate { ExitApplication(); });
             trayIcon.Icon = Icon;
             trayIcon.Text = "DisplayWeave " + Program.Version;
             trayIcon.ContextMenuStrip = trayMenu;
             trayIcon.MouseDoubleClick += delegate(object sender, MouseEventArgs e) { if (e.Button == MouseButtons.Left) ShowSettingsWindow(); };
+            trayIcon.BalloonTipClicked += delegate { HandledApp offer = offeredRule; offeredRule = null; if (offer != null) ApplyOfferedRule(offer); };
             trayIcon.Visible = true;
+        }
+
+        // Every notification goes through here: clicking one other than the rule offer must not save that rule.
+        private void ShowBalloon(string title, string text, ToolTipIcon icon, HandledApp offer = null)
+        {
+            offeredRule = offer;
+            trayIcon.ShowBalloonTip(offer != null ? 10000 : 5000, title, text, icon);
+        }
+
+        // A borderless game that resized itself back: offer the rule that fits it, once per app this session.
+        private void OfferBorderlessRule(HandledApp app)
+        {
+            int index = settings.Zones.FindIndex(delegate(Zone zone) { return zone.ToPixels(Area) == app.Region; });
+            if (index < 0 || !offeredApps.Add(app.Target.ProcessKey)) return;
+            ShowBalloon(Path.GetFileName(app.Target.ExecutablePath) + " resized itself back", "Click to give it a Borderless in region rule for " +
+                settings.Zones[index].Name + ". Then set it to Windowed in its own settings.", ToolTipIcon.Info, app);
+        }
+
+        private void ApplyOfferedRule(HandledApp offer)
+        {
+            ApplicationIdentity current;
+            string error;
+            int index = settings.Zones.FindIndex(delegate(Zone zone) { return zone.ToPixels(Area) == offer.Region; });
+            if (!FullscreenController.TryInspect(offer.Target.Handle, out current, out error) || current.Key != offer.Target.Key)
+                Report(Path.GetFileName(offer.Target.ExecutablePath) + " has closed, so no rule was saved.");
+            else if (index < 0) Report("The layout changed since the offer. Add the rule for " + Path.GetFileName(offer.Target.ExecutablePath) + " on App rules.");
+            else Assign(offer.Target.Handle, index, ApplicationAction.BorderlessInRegion);
         }
 
         private void TickNow()
@@ -146,7 +193,14 @@ namespace DisplayWeave
                 // pauses. It must not end DisplayWeave or raise a dialog every tick.
                 try { service.Tick(); }
                 catch (Exception ex) { ReportInternalError(ex, true); }
+                if (DateTime.UtcNow - started > TimeSpan.FromMinutes(1)) MarkHealthy();
+                HandledApp offer = fullscreen.TakeSuggestion();
+                if (offer != null) OfferBorderlessRule(offer);
                 UpdateStatus();
+                // Maximizing is caught at once by the watcher; the timer only needs to be quick while windows move,
+                // this window is open or a helper is working.
+                int interval = Visible || fullscreen.Count + fullscreen.PendingCount > 0 || DateTime.UtcNow < fastTicksUntil ? 250 : 1000;
+                if (timer.Interval != interval) timer.Interval = interval;
             }
             finally { ticking = false; }
         }
@@ -160,7 +214,7 @@ namespace DisplayWeave
                 if (!trayHintShown)
                 {
                     trayHintShown = true;
-                    trayIcon.ShowBalloonTip(2500, "DisplayWeave is still running",
+                    ShowBalloon("DisplayWeave is still running",
                         layoutDirty ? "Your edits are still pending. Open DisplayWeave from the tray and Save layout to apply them."
                             : "Double-click the tray icon to reopen. Choose Exit DisplayWeave to stop region handling.", ToolTipIcon.Info);
                 }
@@ -178,6 +232,8 @@ namespace DisplayWeave
             timer.Stop();
             service.Dispose();
             trayIcon.Visible = false;
+            MarkHealthy();
+            ActivityLog.Write("DisplayWeave exited.");
         }
 
         private void ExitApplication()
@@ -241,13 +297,7 @@ namespace DisplayWeave
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
-            int failed = 0;
-            for (int i = 0; i <= 10; i++)
-            {
-                uint key = i == 10 ? (uint)Keys.Back : (uint)Keys.D0 + (uint)i;
-                if (RegisterHotKey(Handle, 800 + i, 0x4007, key)) registeredHotkeys.Add(800 + i); else failed++;
-            }
-            hotkeyNotice = failed == 0 ? "" : "  ·  " + failed + " shortcuts unavailable (already in use).";
+            RegisterShortcuts();
         }
 
         protected override void OnHandleDestroyed(EventArgs e)
@@ -261,28 +311,30 @@ namespace DisplayWeave
         {
             if (m.Msg == Program.ShowSettingsMessage) { ShowSettingsWindow(); return; }
             // The new version adopts the windows fitted from outside where they are, so they are not returned first.
-            if (m.Msg == Program.ExitForUpdateMessage) { fullscreen.LeaveFittedWindows(); ExitApplication(); return; }
-            if (m.Msg == 0x312)
+            if (m.Msg == Program.ExitForUpdateMessage)
             {
-                int index = m.WParam.ToInt32() - 800;
-                if (index == 10) RestoreAll();
-                else if (index == 0) ReleaseWindow(WindowManager.ForegroundWindow);
-                else if (index >= 1 && index <= 9) Assign(WindowManager.ForegroundWindow, index - 1);
+                ActivityLog.Write("Closing for an update; windows fitted from outside stay where they are.");
+                fullscreen.LeaveFittedWindows();
+                ExitApplication();
+                return;
             }
+            if (m.Msg == 0x312) RunShortcut(m.WParam.ToInt32() - FirstHotkeyId);
             else if (m.Msg == 0x7E && screens != null && displayWait.IsEmpty)
             {
                 // A game in exclusive fullscreen changes the display until it leaves: keep the layout, pause and resume
-                // when the display is back. While waiting, later changes are left to the timer.
+                // when the display is back. Without such a game the change stays (DisplayChangedForGood). While
+                // waiting, later changes are left to the timer.
                 bool wasRunning = !fullscreen.Paused;
                 fullscreen.Pause();
                 lastEngineError = fullscreen.LastMessage;
                 if (wasRunning && !layoutDirty && rulerLayout != null)
                 {
                     displayWait = rulerLayout.Area;
+                    displayWaitSince = DateTime.UtcNow;
                     Report("The display changed, as a game in exclusive fullscreen does. Region handling is paused and resumes when the display is back to " +
-                        displayWait.Width.ToString("N0") + " × " + displayWait.Height.ToString("N0") + ". To use the display as it is now, choose Save layout.");
+                        displayWait.Width.ToString("N0") + " × " + displayWait.Height.ToString("N0") + ". To use the display as it is now, choose Use this display size.");
                 }
-                else BeginInvoke((Action)delegate { LoadMonitors(); ReloadZones(0); notice = "Display configuration changed. Rules paused; review the layout, then Apply saved rules."; UpdateStatus(); });
+                else BeginInvoke((Action)DisplayChangedForGood);
             }
             base.WndProc(ref m);
         }

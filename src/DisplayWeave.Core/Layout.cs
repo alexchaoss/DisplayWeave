@@ -134,6 +134,11 @@ namespace DisplayWeave
     {
         private const long MaximumXmlCharacters = 1024 * 1024;
         public string MonitorDevice;
+        // The monitor's device path and size when last saved: Windows can renumber MonitorDevice.
+        public string MonitorId;
+        public int MonitorWidth, MonitorHeight;
+        // The layout profile this is; the first one is named Default.
+        public string ProfileName;
         public bool UseWorkArea = true;
         public bool AutomaticRegions = true;
         public bool Borderless = false;
@@ -157,6 +162,7 @@ namespace DisplayWeave
         public LayoutSettings()
         {
             MonitorDevice = String.Empty;
+            ProfileName = "Default";
             Zones = Preset(0);
         }
 
@@ -245,6 +251,27 @@ namespace DisplayWeave
             }
         }
 
+        // Profile names become file names: letters, digits, spaces, hyphens and underscores, starting with a letter or digit.
+        public static bool ValidProfileName(string name)
+        {
+            return name != null && System.Text.RegularExpressions.Regex.IsMatch(name, @"^[\p{L}\p{N}][\p{L}\p{N} _-]{0,31}$") && name.Trim() == name;
+        }
+
+        // Takes another profile's settings into this object, which the app and engine keep referring to.
+        public void CopyFrom(LayoutSettings other)
+        {
+            MonitorDevice = other.MonitorDevice;
+            MonitorId = other.MonitorId;
+            MonitorWidth = other.MonitorWidth;
+            MonitorHeight = other.MonitorHeight;
+            ProfileName = other.ProfileName;
+            UseWorkArea = other.UseWorkArea;
+            AutomaticRegions = other.AutomaticRegions;
+            Borderless = other.Borderless;
+            GridStepPixels = other.GridStepPixels;
+            Zones = other.Zones == null ? null : new List<Zone>(other.Zones);
+        }
+
         public static List<Zone> Preset(int kind)
         {
             switch (kind)
@@ -275,6 +302,8 @@ namespace DisplayWeave
         private void Normalize()
         {
             MonitorDevice = Zone.SafeText(MonitorDevice, String.Empty, 256);
+            MonitorId = Zone.SafeText(MonitorId, String.Empty, 512);
+            if (!ValidProfileName(ProfileName)) ProfileName = "Default";
             if (GridStepPixels < 1 || GridStepPixels > 100000)
             {
                 GridStepPixels = 100;

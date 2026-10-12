@@ -59,6 +59,15 @@ version takes over the maximized ones. Until the update installs, the tray menu
 offers **Install DisplayWeave <version> now**.
 Your regions, app rules and startup choice are kept.
 
+From 0.6.0, right before it starts a downloaded setup, DisplayWeave checks it again and holds it open,
+so it cannot be swapped in between. A new version that stops twice before it has run
+for a minute, without being exited, is given up: the launcher goes back to the version
+it replaced, and updates skip it from then on. The tray menu's **Go back to
+DisplayWeave <version>** does the same by hand; DisplayWeave restarts in the earlier
+version, which stays installed next to the newer one. Version 0.5.12 and older do not know to skip
+a given-up version, so once back on one of them it installs that version again at its
+next check.
+
 ### With the install script
 
 Download `install.ps1` from the
@@ -115,9 +124,9 @@ in the source project). Keep its `native-v2-x64` and `native-v2-x86` folders nex
 to it. It uses the .NET Framework supplied with Windows 10/11. Exit other display or
 window managers while using DisplayWeave so that two of them do not control the same app.
 
-The settings window has three tabs: **Layout** for the display and ruler editor,
-**App rules** for automatic handling and manual overrides, and **Status & help**
-for detailed activity, shortcuts, and Exit. **Save layout** and **Pause handling** /
+The settings window has four tabs: **Layout** for the display, ruler editor and layout
+profiles, **App rules** for automatic handling and manual overrides, **Shortcuts** for
+your keyboard shortcuts, and **Status & help** for detailed activity and Exit. **Save layout** and **Pause handling** /
 **Resume handling** stay visible on every tab. The bottom activity line opens
 Status & help when clicked; hover it to read a longer message.
 
@@ -144,8 +153,9 @@ the technical details for a bug report.
 To report a bug, choose **Diagnostic report…** at the bottom of Status & help. It shows
 a Markdown summary for you to review: DisplayWeave and Windows versions, each display's
 size, work area, scaling and adapter, graphics driver versions, the layout and each
-handled app's status. It has no window titles, paths, or user or computer names. App
-file names appear only if you tick **Include app file names**. Choose **Copy to
+handled app's status, and the last 40 lines of the activity log. It has no window
+titles, paths, or user or computer names. App file names appear only if you tick
+**Include app file names**. Choose **Copy to
 clipboard**, then **Open a new issue** and paste it. Report security problems privately,
 as [SECURITY.md](.github/SECURITY.md) explains.
 
@@ -176,11 +186,18 @@ as [SECURITY.md](.github/SECURITY.md) explains.
 6. **Release for now** returns the selected app to normal until you choose **Apply
    saved rules** or restart DisplayWeave; **Pause handling** suspends every rule.
 
-Portable rules and layout are saved beside the executable as `rules.xml` and
-`layout.xml`; installed copies use the shared `data` folder.
+Portable settings are saved beside the executable (`layout.xml`, `rules.xml`,
+`shortcuts.xml`, `app-regions.xml` and the `profiles` folder); installed copies use the
+shared `data` folder. From 0.6.0, what DisplayWeave did is written one line at a time to
+`logs\activity.log` there, kept to about 1 MB plus one older file.
 Saved rules apply on the next launch and to future matching application windows.
 They match the full executable path and window class, with one target window and
-region per process. A missing region or monitor is not silently substituted; the
+region per process. From 0.6.0, a part of the class that changes on every run (a GUID, or the
+suffix some frameworks add) is ignored, and Store apps, which all share one host
+program, are told apart by their app ID. The saved rules list shows when each rule
+last applied. When Windows renames the display (`\\.\DISPLAYn`), as it can after a
+restart or a driver update, the layout and its rules follow the monitor; if the
+monitor itself is gone, they move only to the one display of the same size. A missing region or monitor is not silently substituted; the
 app shows as **Error** in Status & help until you assign it a region again. If
 `rules.xml` cannot be read, DisplayWeave starts without rules, says so, and copies
 the file to `rules.xml.unreadable.bak` before a save can replace it.
@@ -219,9 +236,28 @@ a complete rectangular grid are replaced with a valid layout, with rules paused
 for review. The previous file is backed up as `layout.xml.before-rulers.bak` on
 the first migration. Ruler spacing is saved with the layout.
 
-Shortcuts: **Ctrl+Alt+Shift+1…9** saves a Force fullscreen rule for the foreground app;
-**Ctrl+Alt+Shift+0** releases it; **Ctrl+Alt+Shift+Backspace** pauses all rules.
-The interface reports shortcuts already used by another program.
+### Layout profiles
+
+From 0.6.0, a profile is a whole layout with its own app rules, such as one for work and one for
+games. On **Layout**, **New…** copies the current layout and its rules into a new
+profile and switches to it; choose a profile in the list, or in the tray menu's
+**Layout profile**, to switch. Switching saves the current layout, returns fitted
+windows to their monitor and fits them again in the new profile's regions.
+**Delete** removes the profile in use after switching to another one. Ignore rules,
+and rules saved before profiles existed, apply in every profile.
+
+### Shortcuts
+
+From 0.6.0, DisplayWeave has no keyboard shortcuts of its own; the Ctrl+Alt+Shift ones of
+earlier versions are gone. On **Shortcuts**, **Add shortcut…**
+records the keys you press (with Ctrl or Alt) and what they do for the app in front:
+fit it into a region (a Maximize in region rule, and the window is maximized), show it
+borderless in a region, force its fullscreen into a region, or release it; or pause and
+resume handling, or switch to a layout profile. The list says when another program
+already uses a shortcut.
+
+Hold **Shift** while you maximize a window to leave it filling its display that once;
+it is fitted again the next time it is maximized.
 
 ## Automatic handling and the component
 
@@ -241,9 +277,16 @@ received it from an earlier version keeps it, inactive, until the app restarts.
 The app still sees the whole monitor. A game in borderless fullscreen that resizes
 itself back to the monitor is left alone after one move (from 0.5.12), and a
 maximized window that keeps changing its size after three, with a message in Status &
-help. Such a game needs an [App rule](#app-rules), usually **Borderless in region**.
+help. Such a game needs an [App rule](#app-rules), usually **Borderless in region**:
+from 0.6.0, DisplayWeave offers it in a notification, once per game and session. Click it to save
+that rule for the game's region, then set the game to Windowed.
 Each move resizes the app's window; in-game overlays from other programs that hook a
 game's graphics can crash some games on a resize, so disable them if that happens.
+
+From 0.6.0, DisplayWeave remembers the region each app was last fitted into, per layout profile.
+An app that starts maximized or in borderless fullscreen goes back to that region
+instead of the one under its restored place; windows already open when DisplayWeave
+starts stay where they are.
 
 Un-maximizing or leaving fullscreen hands the window back to the app and Windows.
 Pausing, releasing, removing the rule, turning automatic handling off or exiting
@@ -269,7 +312,9 @@ DisplayWeave leaves that as it is, with the title bar above the region (off scre
 the region reaches the top of the display). If the game moves out of the region
 instead, DisplayWeave stops after a few tries and says so; pause and resume handling to
 retry. Pausing, releasing, removing the rule or exiting DisplayWeave gives the window its
-title bar, border and first place back. Automatic updates wait while a window is shown
+title bar, border and first place back. If DisplayWeave 0.6.0 or later stops unexpectedly, it gives
+them back as it closes, or its next start takes such windows over from a list it keeps
+while they are shown this way. Automatic updates wait while a window is shown
 this way. File Explorer folder windows can only use Maximize in region.
 
 **Centered fullscreen** (from 0.5.12) needs a one-time setup that App rules spells out
@@ -282,18 +327,22 @@ leaves the game's window alone and changes no display settings. It works only fo
 region in the middle of its display. While the game has focus, the other regions are
 black, and Windows can move other windows while the display is smaller.
 
-When the display changes size, as a game in exclusive fullscreen makes it, DisplayWeave
-pauses and resumes by itself once the display is back to the size the layout was made
-for; the layout is never rebuilt for the temporary size. To keep the display's new size
-instead, choose **Save layout**.
+From 0.6.0, when the display changes size while a fullscreen game is in front, as exclusive
+fullscreen does, DisplayWeave pauses and resumes by itself once the display is back to
+the size the layout was made for; the layout is never rebuilt for the temporary size.
+Meanwhile **Save layout** reads **Use this display size**: choose it to keep the new
+size instead. Without such a game, for example after you change the resolution in
+Windows, the change is kept after a few seconds and handling stays paused until you
+review the layout and save it.
 
-**Force fullscreen** (or a **Ctrl+Alt+Shift+1…9** shortcut) loads DisplayWeave's
+**Force fullscreen** (or a [shortcut](#shortcuts) you make for it) loads DisplayWeave's
 component into that one app. The app then sees its region as its monitor, so its own
 fullscreen modes stay in the region too. Anti-cheat software can treat a loaded
 component as tampering: use Force rules only for apps whose terms allow it. An app
 that refuses the component falls back to the outside fit.
 
-Saved rules are listed under the options, with their app, region and option. A rules
+Saved rules are listed under the options, with their app, region, option and the day
+they last applied; with several layout profiles, the list shows the profile in use. A rules
 file containing a Borderless in region or Centered fullscreen rule cannot be read by
 0.5.11 or older, and one with a Maximize in region rule by 0.5.1 or older.
 
@@ -345,7 +394,9 @@ security. Existing objects are never relabeled.
 
 With administrator access, DisplayWeave starts its native helpers from a copy in
 `%ProgramFiles%\DisplayWeave`, which only administrators can change, and removes
-the copy when it exits. A copy still loaded by a running app is removed at the next
+the copy when it exits. From 0.6.0 it copies only the helper files its build lists and checks each
+copy against the SHA-256 recorded when it was built; a changed helper stops the
+administrator start with a message. A copy still loaded by a running app is removed at the next
 administrator start. Administrator mode never checks for or installs updates.
 
 While running with administrator access, reopen settings from DisplayWeave's
@@ -462,7 +513,8 @@ These commands apply to the source project, not the portable ZIP.
 `fetch-tools.ps1` downloads Zig 0.13.0 and checks it against a SHA-256 pinned in the
 script. MinHook v1.3.4 is vendored as sources and license only. The toolchain stays
 inside the workspace.
-The C# build uses Windows' .NET Framework compiler. Native integration tests open
+The C# build uses Windows' .NET Framework compiler. Build the native files first:
+`build.ps1` records their SHA-256 in the app for administrator mode. Native integration tests open
 temporary DirectX test windows and attach only to those test processes. The monitor fixture keeps its Direct3D swapchain windowed throughout. Legacy DXGI
 fixtures remain available for testing older resident components only.
 
@@ -485,8 +537,11 @@ the user:
 - `Ignore` an app, `Release` a window, `RemoveRule`
 - `Pause`, `ApplySavedRules`, `ApplyLayout`
 
-`Layout`, `Rules` and `Engine` expose the full state, and save failures surface as
-`IOException`. `Engine.HandledApps()` lists each handled app with its state, region
+- `SwitchProfile`, `CreateProfile`, `DeleteProfile` and `Profiles` for layout profiles,
+  and `RebindMonitor` after Windows renames a display
+
+`Layout`, `Rules`, `Shortcuts` and `Engine` expose the full state, and save failures surface as
+`IOException`. Call `ActivityLog.Open(data)` to keep the same activity log as the app. `Engine.HandledApps()` lists each handled app with its state, region
 and error; `Engine.LayoutProblem` says why the layout cannot be used. A minimal host:
 
 ```csharp

@@ -14,9 +14,10 @@ if ($Publish) {
 }
 
 # Native files go next to the release output, not dist: running apps can keep dist DLLs loaded.
+# The app is built after them: it embeds the helpers' hashes for administrator mode.
 $native = Join-Path $repository "release\build-$version"
-& (Join-Path $PSScriptRoot 'build.ps1')
 & (Join-Path $PSScriptRoot 'build-native.ps1') -Architecture all -OutputDirectory $native
+& (Join-Path $PSScriptRoot 'build.ps1') -NativeDirectory $native
 
 $report = Join-Path $env:TEMP ('DisplayWeave-release-' + [Guid]::NewGuid().ToString('N') + '.txt')
 $test = Start-Process -FilePath (Join-Path $repository 'dist\DisplayWeave.exe') -ArgumentList @('--self-test', ('"{0}"' -f $report)) -WindowStyle Hidden -Wait -PassThru

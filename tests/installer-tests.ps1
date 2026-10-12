@@ -107,6 +107,29 @@ Test-Installer 'Installing the identical package again is idempotent' {
     Assert-Installer (@(Get-ChildItem -LiteralPath (Join-Path $installation 'versions') -Directory).Count -eq 2) 'Idempotent install added another version.'
 }
 
+Test-Installer 'The launcher goes back to the replaced version after two failed starts' {
+    $pointerPath = Join-Path $installation 'current.json'
+    $before = [IO.File]::ReadAllText($pointerPath)
+    Assert-Installer (($before | ConvertFrom-Json).previousVersion -eq '0.4.0-preview') 'The pointer does not name the version it replaced.'
+    $health = Join-Path $installation 'health'
+    [void][IO.Directory]::CreateDirectory($health)
+    [IO.File]::WriteAllText((Join-Path $health '0.4.1-preview.starts'), "1`r`n2`r`n", $utf8)
+    # The fixture's programs are not executable, so each launch fails after its bookkeeping and nothing starts.
+    $powershell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $installation 'Launch-DisplayWeave.ps1') + '"'
+    [IO.File]::WriteAllText((Join-Path $health '0.4.1-preview.ok'), '', $utf8)
+    Start-Process -FilePath $powershell -ArgumentList $arguments -WindowStyle Hidden -Wait
+    Assert-Installer ([IO.File]::ReadAllText($pointerPath) -eq $before) 'A version that ran cleanly was given up.'
+    [IO.File]::Delete((Join-Path $health '0.4.1-preview.ok'))
+    Start-Process -FilePath $powershell -ArgumentList $arguments -WindowStyle Hidden -Wait
+    $after = [IO.File]::ReadAllText($pointerPath) | ConvertFrom-Json
+    Assert-Installer ($after.version -eq '0.4.0-preview' -and [IO.File]::Exists((Join-Path $health '0.4.1-preview.failed'))) 'The launcher did not go back after two failed starts.'
+    Invoke-Fixture $second $installation
+    $reinstalled = [IO.File]::ReadAllText($pointerPath) | ConvertFrom-Json
+    Assert-Installer ($reinstalled.version -eq '0.4.1-preview' -and -not [IO.File]::Exists((Join-Path $health '0.4.1-preview.starts'))) 'Reinstalling did not reset the failed starts.'
+    [IO.File]::Delete((Join-Path $health '0.4.1-preview.failed'))
+}
+
 Test-Installer 'A version folder is never replaced by different package bytes' {
     $changed = New-Fixture 'changed-same-version' '0.4.1-preview' @([pscustomobject]@{ Name = 'extra.txt'; Content = 'Different archive'; Attributes = 0 })
     Assert-Rejected { Invoke-Fixture $changed $installation }
@@ -180,7 +203,7 @@ Test-Installer 'Failed pointer replacement restores the previous launcher and po
 
 Test-Installer 'Uninstall removes program files and keeps settings' {
     & $installer -Uninstall -InstallRoot $installation | Out-Null
-    foreach ($removed in @('current.json', 'Launch-DisplayWeave.ps1', 'DisplayWeave.lnk', 'versions', '.install.lock')) {
+    foreach ($removed in @('current.json', 'Launch-DisplayWeave.ps1', 'DisplayWeave.lnk', 'versions', 'health', '.install.lock')) {
         Assert-Installer (-not (Test-Path -LiteralPath (Join-Path $installation $removed))) "Uninstall left $removed."
     }
     Assert-Installer ([IO.File]::ReadAllText((Join-Path $installation 'data\layout.xml')) -eq '<layout>user edit</layout>') 'Uninstall removed settings without -RemoveSettings.'

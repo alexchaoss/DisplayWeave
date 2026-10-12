@@ -13,6 +13,8 @@ namespace DisplayWeave
         private readonly Label actionFeedback = new Label();
         private readonly Button pauseHandling = new Button();
         private readonly ToolTip hints = new ToolTip();
+        private TabPage statusPage;
+        private Button saveLayout;
 
         private void BuildInterface()
         {
@@ -33,7 +35,7 @@ namespace DisplayWeave
             engineState.TextAlign = ContentAlignment.MiddleRight;
             engineState.Padding = new Padding(0, 0, 18, 0);
             engineState.Cursor = Cursors.Hand;
-            engineState.Click += delegate { pages.SelectedIndex = 2; };
+            engineState.Click += delegate { pages.SelectedTab = statusPage; };
             hints.SetToolTip(engineState, "Click to see each app's status in Status & help.");
             header.Controls.Add(engineState, 1, 0);
             StyleButton(pauseHandling);
@@ -49,17 +51,19 @@ namespace DisplayWeave
             pages.AccessibleName = "Settings sections";
             var layoutPage = Page("Layout");
             var rulesPage = Page("App rules");
-            var statusPage = Page("Status & help");
-            pages.TabPages.AddRange(new[] { layoutPage, rulesPage, statusPage });
+            var shortcutsPage = Page("Shortcuts");
+            statusPage = Page("Status & help");
+            pages.TabPages.AddRange(new[] { layoutPage, rulesPage, shortcutsPage, statusPage });
             pages.SelectedIndexChanged += delegate
             {
-                if (pages.SelectedIndex != 1 && picking)
+                if (pages.SelectedTab != rulesPage && picking)
                 {
                     picking = false; picker.Capture = false; Cursor = Cursors.Default;
                 }
             };
             BuildLayoutPage(layoutPage);
             BuildRulesPage(rulesPage);
+            BuildShortcutsPage(shortcutsPage);
             BuildStatusPage(statusPage);
             root.Controls.Add(pages, 0, 1);
 
@@ -76,9 +80,9 @@ namespace DisplayWeave
             actionFeedback.ForeColor = Color.FromArgb(75, 89, 110);
             actionFeedback.Cursor = Cursors.Hand;
             actionFeedback.AccessibleName = "Latest activity. Click for status details.";
-            actionFeedback.Click += delegate { pages.SelectedIndex = 2; };
-            // Save layout while waiting for the display keeps the display as it is now.
-            var save = Button("Save layout", delegate { EndDisplayWait(); SaveLayout(true); });
+            actionFeedback.Click += delegate { pages.SelectedTab = statusPage; };
+            // While waiting for the display it reads Use this display size: the layout is saved for the display as it is now.
+            var save = saveLayout = Button("Save layout", delegate { EndDisplayWait(); SaveLayout(true); });
             save.BackColor = Color.FromArgb(34, 99, 176);
             save.ForeColor = Color.White;
             save.FlatAppearance.BorderSize = 0;

@@ -31,6 +31,8 @@ namespace DisplayWeave
                 ShellTests(test);
                 DiagnosticTests(test);
                 HandlingTests(test, temporary);
+                IdentityTests(test);
+                RecoveryTests(test);
             }
             finally
             {

@@ -28,6 +28,12 @@ namespace DisplayWeave
         private readonly Dictionary<IntPtr, MaximizedFit> maximized = new Dictionary<IntPtr, MaximizedFit>();
 
         private const int MaximumFitAttempts = 4;
+        // Maximized while Shift was held: left filling the monitor until restored.
+        private readonly HashSet<string> shiftSkipped = new HashSet<string>(StringComparer.Ordinal);
+        // Self-tests replace it; otherwise whether Shift is down right now.
+        internal Func<bool> ShiftHeld = delegate { return (GetAsyncKeyState(0x10) & 0x8000) != 0; };
+        // A borderless game that resized itself back, with the region it was in: a Borderless in region rule would fit it.
+        private HandledApp suggestion;
         // A game can take a second to rebuild its swap chain before it handles the move.
         private static readonly TimeSpan FitRetryDelay = TimeSpan.FromSeconds(2);
 
@@ -35,6 +41,14 @@ namespace DisplayWeave
         // The next version adopts the maximized ones where they are, so they do not flash across the display; a borderless
         // fullscreen window stays in its region and is taken over when it next enters fullscreen. A window shown without
         // its title bar gets it back on exit as usual: the next version could not know its original style.
+        // The app and region for a one-click Borderless in region rule, once; null when there is none.
+        public HandledApp TakeSuggestion()
+        {
+            HandledApp result = suggestion;
+            suggestion = null;
+            return result;
+        }
+
         public void LeaveFittedWindows()
         {
             foreach (IntPtr handle in new List<IntPtr>(maximized.Keys)) if (!maximized[handle].Styled) maximized.Remove(handle);
@@ -51,6 +65,7 @@ namespace DisplayWeave
             // A restored window is back where Windows keeps its normal position; nothing to undo.
             if (IsIconic(handle) || !(IsZoomed(handle) || BorderlessFullscreen(handle, frame, fit)))
             {
+                if (!IsIconic(handle)) shiftSkipped.Remove(target.Key);
                 if (fit == null || IsIconic(handle)) return;
                 maximized.Remove(handle);
                 // Restoring is the retry for a failed fit: show the component's reason again, not the old fit failure.
@@ -60,12 +75,19 @@ namespace DisplayWeave
                 }
                 return;
             }
+            if (shiftSkipped.Contains(target.Key)) return;
             if (current == wanted)
             {
                 // Already in its region, as the previous version leaves it during an update: adopt it, so exiting returns it.
                 if (fit == null) maximized.Add(handle, new MaximizedFit { Target = target, Region = region,
                     Reason = OutsideOnlyReason(target.WindowClass) ?? failureHistory.For(target) });
                 else if (fit.Attempts != 0) { fit.Attempts = 0; failureHistory.ClearTarget(target); }
+                return;
+            }
+            if (fit == null && ShiftHeld())
+            {
+                shiftSkipped.Add(target.Key);
+                LastMessage = "Left the " + Path.GetFileName(target.ExecutablePath) + " window filling its monitor because Shift was held. Restore and maximize it again to fit it.";
                 return;
             }
             if (fit == null) maximized.Add(handle, fit = new MaximizedFit { Target = target,
@@ -81,6 +103,7 @@ namespace DisplayWeave
                 fit.Attempts = MaximumFitAttempts;
                 RecordFailure(target, zoomed ? "It keeps changing its maximized size, so DisplayWeave stopped fitting it. Restore and maximize it again to retry"
                     : "It resized itself back to fill its monitor, so DisplayWeave stopped moving it. Set it to Windowed and give it a Borderless in region rule on App rules", true);
+                if (!zoomed) suggestion = new HandledApp { Target = target, Region = region, State = HandledAppState.Error };
                 return;
             }
             if (!SetWindowPos(handle, IntPtr.Zero, wanted.X, wanted.Y, wanted.Width, wanted.Height, FitFlags))
@@ -126,6 +149,7 @@ namespace DisplayWeave
             // Styles the app added back since its first fit return with it on release too.
             fit.RemovedStyle |= style & BorderStyles;
             fit.RemovedExStyle |= extended & BorderExStyles;
+            SaveJournal(); // before the change, so a crash right after it can still be undone
             SetWindowLong(handle, GwlStyle, style & ~BorderStyles);
             SetWindowLong(handle, GwlExStyle, extended & ~BorderExStyles);
             if (!SetWindowPos(handle, IntPtr.Zero, region.X, region.Y, region.Width, region.Height, FitFlags | SwpFrameChanged))
@@ -197,7 +221,7 @@ namespace DisplayWeave
                     string error;
                     if (TryInspect(fit.Target.Handle, out current, out error) && current.Key == fit.Target.Key)
                     {
-                        ApplicationRule rule = MatchingRule(rules, current);
+                        ApplicationRule rule = MatchingRule(rules, current, layout);
                         Rectangle region;
                         bool resolved = RegionGeometry.TryResolveRegion(rule, layout, out region);
                         RegionControlMode mode = AutomaticRegionPolicy.Decide(layout.AutomaticRegions, false, released.Contains(current.ProcessKey),
@@ -220,6 +244,7 @@ namespace DisplayWeave
                 if (TryInspect(fit.Target.Handle, out current, out error) && current.Key == fit.Target.Key) ReturnToMonitor(fit);
             }
             maximized.Clear();
+            SaveJournal();
         }
 
         private static void ReturnToMonitor(MaximizedFit fit)

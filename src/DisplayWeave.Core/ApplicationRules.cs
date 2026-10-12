@@ -1,8 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Text;
-using System.Xml;
+using System.Text.RegularExpressions;
 using System.Xml.Serialization;
 
 namespace DisplayWeave
@@ -16,15 +15,42 @@ namespace DisplayWeave
     {
         public string ExecutablePath;
         public string WindowClass;
+        // A Store app's AppUserModelID: every Store app's window belongs to the same host program and class.
+        public string AppId;
         public string DisplayName;
         public ApplicationAction Action;
         public string MonitorDevice;
         public string ZoneId;
+        // The layout profile the rule belongs to; empty applies in every profile.
+        public string ProfileName;
+        // The first time on the latest day an app matched the rule, in UTC; DateTime.MinValue when never.
+        public DateTime LastMatched;
 
         public bool Matches(ApplicationIdentity identity)
         {
-            return identity != null && String.Equals(ExecutablePath, identity.ExecutablePath, StringComparison.OrdinalIgnoreCase)
-                && String.Equals(WindowClass, identity.WindowClass, StringComparison.Ordinal);
+            return identity != null && SameApp(ExecutablePath, WindowClass, AppId, identity.ExecutablePath, identity.WindowClass, identity.AppId);
+        }
+
+        internal bool AppliesTo(string profileName)
+        {
+            return String.IsNullOrEmpty(ProfileName) || String.Equals(ProfileName, profileName ?? String.Empty, StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal static bool SameApp(string path, string windowClass, string appId, string otherPath, string otherClass, string otherAppId)
+        {
+            return String.Equals(path, otherPath, StringComparison.OrdinalIgnoreCase) &&
+                String.Equals(StableClass(windowClass), StableClass(otherClass), StringComparison.Ordinal) &&
+                String.Equals(appId ?? String.Empty, otherAppId ?? String.Empty, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Some frameworks put a per-run part in their window class: a GUID (WPF's HwndWrapper[app;;GUID]), the
+        // WinForms hash suffix, or MFC and ATL addresses. That part is replaced, so a rule outlives a restart.
+        public static string StableClass(string windowClass)
+        {
+            if (String.IsNullOrEmpty(windowClass)) return windowClass ?? String.Empty;
+            string stable = Regex.Replace(windowClass, @"\{?[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}?", "*");
+            stable = Regex.Replace(stable, @"^(WindowsForms10\..+\.app\.0)\.[^.]+$", "$1.*");
+            return Regex.Replace(stable, @"^(Afx|ATL):[0-9A-Fa-f:]+$", "$1:*");
         }
 
         public override string ToString()
@@ -59,20 +85,15 @@ namespace DisplayWeave
         public static ApplicationRules Load(string path, out string warning)
         {
             warning = String.Empty;
-            if (!File.Exists(path)) return new ApplicationRules();
             try
             {
-                XmlReaderSettings options = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit,
-                    XmlResolver = null, MaxCharactersInDocument = 1024 * 1024, MaxCharactersFromEntities = 0 };
-                using (XmlReader reader = XmlReader.Create(path, options))
-                {
-                    ApplicationRules result = (ApplicationRules)new XmlSerializer(typeof(ApplicationRules)).Deserialize(reader);
-                    result.Rules.RemoveAll(delegate(ApplicationRule rule) { return rule == null || String.IsNullOrWhiteSpace(rule.ExecutablePath)
-                        || !Path.IsPathRooted(rule.ExecutablePath) || String.IsNullOrEmpty(rule.WindowClass)
-                        || !Enum.IsDefined(typeof(ApplicationAction), rule.Action); });
-                    if (result.Rules.Count > 512) result.Rules.RemoveRange(512, result.Rules.Count - 512);
-                    return result;
-                }
+                ApplicationRules result = XmlFile.Read<ApplicationRules>(path);
+                if (result == null) return new ApplicationRules();
+                result.Rules.RemoveAll(delegate(ApplicationRule rule) { return rule == null || String.IsNullOrWhiteSpace(rule.ExecutablePath)
+                    || !Path.IsPathRooted(rule.ExecutablePath) || String.IsNullOrEmpty(rule.WindowClass)
+                    || !Enum.IsDefined(typeof(ApplicationAction), rule.Action); });
+                if (result.Rules.Count > 512) result.Rules.RemoveRange(512, result.Rules.Count - 512);
+                return result;
             }
             catch (Exception ex)
             {
@@ -81,30 +102,22 @@ namespace DisplayWeave
             }
         }
 
+        // One rule per app and profile. An Ignore rule applies in every profile, so it replaces all of the app's
+        // rules, and any other rule replaces it.
         public void Put(ApplicationRule rule)
         {
-            Rules.RemoveAll(delegate(ApplicationRule old) { return String.Equals(old.ExecutablePath, rule.ExecutablePath, StringComparison.OrdinalIgnoreCase)
-                && String.Equals(old.WindowClass, rule.WindowClass, StringComparison.Ordinal); });
+            Rules.RemoveAll(delegate(ApplicationRule old)
+            {
+                return ApplicationRule.SameApp(old.ExecutablePath, old.WindowClass, old.AppId, rule.ExecutablePath, rule.WindowClass, rule.AppId) &&
+                    (rule.Action == ApplicationAction.Ignore || old.Action == ApplicationAction.Ignore ||
+                    String.Equals(old.ProfileName ?? String.Empty, rule.ProfileName ?? String.Empty, StringComparison.OrdinalIgnoreCase));
+            });
             Rules.Add(rule);
         }
 
         public void Save(string path)
         {
-            string full = Path.GetFullPath(path);
-            string temporary = full + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            try
-            {
-                // Written through to disk before it replaces the old file, so a power cut cannot leave an empty rules file.
-                using (FileStream stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
-                {
-                    using (XmlWriter writer = XmlWriter.Create(stream, new XmlWriterSettings { Indent = true, Encoding = new UTF8Encoding(false) }))
-                        new XmlSerializer(typeof(ApplicationRules)).Serialize(writer, this);
-                    stream.Flush(true);
-                }
-                if (File.Exists(full)) File.Replace(temporary, full, null);
-                else File.Move(temporary, full);
-            }
-            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+            XmlFile.Write(path, this);
         }
     }
 }
