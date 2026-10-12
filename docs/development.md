@@ -9,7 +9,7 @@ Start with [AGENTS.md](../AGENTS.md) and the [dated handoff](agent-handoff.md). 
 | `src/DisplayWeave.Core` | Legacy region engine, `DisplayWeave.Core.dll`: layout, rules, window listing, controller and the `RegionService` facade. Compiled without any UI reference. |
 | `src/DisplayWeave` | Legacy WinForms app over the engine (`version.txt`, `release.json`, `app.manifest`); managed checks under `Tests/`. |
 | `native/legacy` | Legacy hook host, RegionHook DLL, fullscreen probe and protocols; loader fixtures under `tests/`. |
-| `scripts` | `fetch-tools`, `build`, `build-native`, `package`, `build-setup`, `release`. |
+| `scripts` | `fetch-tools`, `build`, `build-native`, `package`, `build-setup`, `release`, `sign-release` (maintainer's computer only). |
 | `installer` | `install.ps1`, shipped at the root of the package, and the setup program in `installer/setup`. |
 | `tests` | Installer regression checks and all live fixtures (`test-*.ps1`). |
 | `third_party`, `docs` | Vendored MinHook 1.3.4 (sources, headers and license only); documentation. |
@@ -22,13 +22,13 @@ The virtual-display projection prototype (its app, `native/projection`, scripts,
 
 | Concern | Files and existing behavior |
 | --- | --- |
-| Legacy entry and lifecycle | `src/DisplayWeave/Program.cs`, `AppOptions.cs`, `ElevationRestart.cs`, `StartupRegistration.cs`, `Updater.cs`: single instance, settings location, explicit elevation, sign-in startup and release updates through `gh`. |
-| Legacy interface | `MainForm.cs`, `MainForm.Interface.cs`, `RulerCanvas.cs`: tabs, ruler editor, app picker, status and tray. Closing X hides to tray; Exit stops handling. Actions call `RegionService`; keep business logic out of the form. |
+| Legacy entry and lifecycle | `src/DisplayWeave/Program.cs`, `AppOptions.cs`, `ElevationRestart.cs`, `StartupRegistration.cs`, `Updater.cs`: single instance, settings location, explicit elevation, sign-in startup and release updates from the public GitHub releases. |
+| Legacy interface | `MainForm.cs`, `MainForm.Interface.cs`, `RulerCanvas.cs`: tabs, ruler editor, app picker, status and tray. `DiagnosticReport.cs`: the Status & help report for GitHub issues; its `Scrub` removes paths, user/computer names, SIDs and (unless chosen) app names from all free text. Closing X hides to tray; Exit stops handling. Actions call `RegionService`; keep business logic out of the form. |
 | Layout and rules | `src/DisplayWeave.Core`: `Layout.cs`, `RulerLayout.cs`, `ApplicationRules.cs`, `AutomaticRegionPolicy.cs`: non-overlapping grid, saved identities, rule precedence and automatic overlap selection. |
 | Window/controller ownership | `WindowManager.cs` lists eligible windows; `DisplayMonitor.cs` reads monitors; `FullscreenController.cs` manages the legacy native component; `RegionService.cs` loads/saves settings and exposes the app's actions to any host. Do not pull the controller into the non-injecting prototype (`prototype` branch). |
 | Legacy native code | `native/legacy/HookHost.cpp`, `RegionHook.cpp`, `RegionProtocol.h`, `RegionLayoutProtocol.h`, `VirtualMonitorModel.h`: delivery, resident-hook reconnection and USER32 monitor/window compatibility. `ShellPolicy.h` and `CompatibilityPolicy.h` contain exclusions. |
 | Managed checks | `src/DisplayWeave/Tests/LayoutTests.cs`, `RuleTests.cs`, `AutomaticRegionTests.cs`, `LifecycleTests.cs`; `AutomaticControllerIntegration.cs` has separate live fixture integration. |
-| Packaging and CI | Legacy: `scripts/package.ps1`, `installer/install.ps1` (install and `-Uninstall`), `tests/installer-tests.ps1`; setup: `installer/setup/Setup.cs`, `scripts/build-setup.ps1`, `tests/setup-tests.ps1`; full flow: `scripts/release.ps1`. CI: `.github/workflows/build.yml`. |
+| Packaging and CI | Legacy: `scripts/package.ps1`, `installer/install.ps1` (install and `-Uninstall`), `tests/installer-tests.ps1`; setup: `installer/setup/Setup.cs`, `scripts/build-setup.ps1`, `tests/setup-tests.ps1`; full flow: `scripts/release.ps1`. CI: `.github/workflows/build.yml`; its actions are pinned to commit SHAs (version in a trailing comment), and `.github/dependabot.yml` proposes grouped updates weekly after a 7-day cooldown. Issue templates and `SECURITY.md` are under `.github`. |
 
 ## Build and checks without desktop interaction
 
@@ -84,26 +84,34 @@ They are not required for documentation changes. Keep the user informed when a r
 
 `version.txt` and `release.json` must agree. Packaging uses an allowlist and generates ZIP/checksum output under `release`; Installer regression checks use temporary fixtures without GitHub calls or application launches; the only registry write is a temporary HKCU RunOnce value in the in-use uninstall case, restored afterwards. Publishing a release is distinct from pushing source; do not imply one accomplished the other.
 
-`install.ps1` supports private GitHub releases via authenticated `gh` or a local ZIP/checksum. Default legacy root is `%LOCALAPPDATA%\DisplayWeave`, with `versions`, `data` and `current.json`. `-Startup Preserve -NoLaunch` preserves startup and does not launch the app. Keep old version folders while applications may retain their DLLs. See [README install guidance](../README.md#install-or-update) for migration and elevated-instance behavior.
+`install.ps1` installs a GitHub release downloaded anonymously over HTTPS, accepted only with a release-key signature on its `.sha256` (`$releaseKeys`, the same list as `Updater.ReleaseKeys`), or a local ZIP/checksum without that check. Default legacy root is `%LOCALAPPDATA%\DisplayWeave`, with `versions`, `data` and `current.json`. `-Startup Preserve -NoLaunch` preserves startup and does not launch the app. Keep old version folders while applications may retain their DLLs. See [README install guidance](../README.md#install-or-update) for migration and elevated-instance behavior.
 
 ### Setup and release flow
 
 `installer/setup/Setup.cs` builds `DisplayWeave-Setup-<version>.exe` (C# 5, `csc`, no extra tools). It embeds the portable ZIP, its `.sha256` and `installer/install.ps1`; all file work stays in that script, including `-Uninstall [-RemoveSettings]`. The setup only adds a window, the HKCU `Uninstall\DisplayWeave` entry and the `Uninstall DisplayWeave.exe` copy in the install root. Non-default roots (`--install-root`, used by tests) are never registered. Its manifest is `asInvoker`, which also stops Windows' installer detection from prompting for elevation. It is unsigned.
 
-**Publishing is automatic:** bump `src/DisplayWeave/version.txt` and `release.json`, then merge to `main`. The `release` job in `.github/workflows/build.yml` runs after the Windows build job passes. If `v<version>` has no release yet, it publishes the ZIP, the setup and their `.sha256` files that the build job tested, as a prerelease with generated notes. A push to `main` with an already released version publishes nothing. Locally:
+**Releases are signed by the maintainer.** Installed copies and `install.ps1` accept a release only when its `.sha256` file carries an ECDSA P-256 signature (`<file>.sha256.sig`, base64) from a key pinned in `Updater.ReleaseKeys` and `install.ps1`'s `$releaseKeys`. The private key lives in the maintainer's Windows key store (CNG key `DisplayWeave release signing`, not exportable) and never on GitHub. The signed line names the file, and so its version, so an old signed setup cannot be republished under a newer tag. The managed self-test fails while no key is pinned, so neither CI nor `release.ps1` can produce a release that installed copies could never verify.
+
+1. Once per computer: `.\scripts\sign-release.ps1 -NewKey` creates the key and pins its public half in both files; commit them. A backup key made the same way on another computer is added with `-PinKey <base64>`. Pinned keys reach installed copies only through a release signed with a key they already trust, so pin a backup before the only key could be lost.
+2. Bump `src/DisplayWeave/version.txt` and `release.json`, then merge to `main`. The `release` job in `.github/workflows/build.yml` runs after both Windows builds pass. If `v<version>` has no release or draft yet, it attests the windows-2022 ZIP and setup (build provenance, Sigstore) and creates a **draft** prerelease with them and their `.sha256` files. Drafts are invisible to installed copies.
+3. `.\scripts\sign-release.ps1 -Version <version>` downloads the draft, checks with `gh attestation verify` that both files were built by this repository's workflow on `main`, checks that each `.sha256` names its file and matches it, signs both, uploads the `.sig` files and publishes the release.
 
 ```powershell
 # Everything except publishing: build, managed/native checks, package, installer and setup tests.
 .\scripts\release.ps1
-# Manual fallback for CI: after committing and pushing the version bump, the same, then the GitHub prerelease v<version>.
+# Manual fallback when CI cannot build: after committing and pushing the version bump, the same,
+# then it signs locally and creates the GitHub prerelease v<version>. Do not also let CI make a draft of it.
 .\scripts\release.ps1 -Publish -NotesFile .\path\to\notes.md
 ```
 
-**Updates:** `src/DisplayWeave/Updater.cs` runs only in an installed copy (`<root>\versions\<version>\` next to `<root>\current.json`). A minute after start and every six hours, it runs the user's `gh`, which keeps the GitHub credentials for the private repository:
-- `gh release list` reads the tags. `prototype-v*` tags are skipped and the highest `v<version>` wins.
-- `gh release download` fetches `DisplayWeave-Setup-<version>.exe` and its `.sha256` into `%TEMP%\DisplayWeaveUpdate`.
+CI runs the build job on `windows-2022` and `windows-2025` and the installer tests in both PowerShell 7 and Windows PowerShell 5.1, which users and the setup use. The build uses .NET Framework `csc` and Zig's own headers, so no Windows SDK version is involved.
+
+**Updates:** `src/DisplayWeave/Updater.cs` runs only in an installed copy (`<root>\versions\<version>\` next to `<root>\current.json`). A minute after start and every six hours, it reads the public releases anonymously over HTTPS (no account, token or `gh`; versions 0.5.5 to 0.5.9 used the user's signed-in `gh`):
+- `GET https://api.github.com/repos/alexchaoss/DisplayWeave/releases?per_page=50` lists the tags; drafts are skipped. `prototype-v*` tags are skipped and the highest `v<version>` wins. Anonymous API calls are limited to 60 an hour per IP address; one check uses one.
+- `DisplayWeave-Setup-<version>.exe`, its `.sha256` and `.sha256.sig` are downloaded from `https://github.com/alexchaoss/DisplayWeave/releases/download/v<version>/` into `%TEMP%\DisplayWeaveUpdate`. `Updater.IsSignedRelease` requires a pinned key's signature over the exact `.sha256` bytes, a line naming `DisplayWeave-Setup-<version>.exe`, and a matching setup hash.
+- The app sets TLS 1.2 itself: built by `csc` without a target-framework attribute, .NET Framework otherwise offers only SSL 3 and TLS 1.0, which GitHub refuses.
 - `MainForm` then starts `--quiet --install-root <root> --log <setup>.log`, but only while its window is hidden and `FullscreenController.HasExpandedApp` is false. That property is true while any app is maximized or fullscreen in a region, or hasn't yet reported its state. The setup closes the app through the existing `--exit-for-update` path and relaunches the new version.
-- A release without a setup asset (any release before 0.5.5) makes the check fail with "no assets match", so every app release must carry the setup.
+- A release without the setup, its checksum or its signature makes the check fail (HTTP 404 or "not signed"), and it retries six hours later. Releases up to 0.5.9 are unsigned; they are older than any copy that checks signatures, so none is offered.
 
 `release.ps1` builds native files into `release\build-<version>` instead of `dist`, because running apps can keep a `dist` DLL loaded (a browser did on the development computer). `tests/setup-tests.ps1` runs the real setup quietly against a temporary root and checks that Settings > Apps, startup and the Start menu stay unchanged. A version folder is immutable once installed, so any package change needs a new version. ZIPs are not byte-reproducible, so a version installed from a local build cannot later be installed from its published rebuild on the same computer; bump the version before publishing in that case. Do not time a setup that relaunches DisplayWeave with Windows PowerShell's `Start-Process -Wait`: it also waits for the relaunched app.
 

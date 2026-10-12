@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace DisplayWeave
 {
@@ -211,6 +214,16 @@ namespace DisplayWeave
                 Assert(Updater.Newest("0.6.0-preview", new string[] { "v0.6.0" }) == "0.6.0", "A final release did not replace its preview.");
                 Assert(Updater.Newest("not-a-version", new string[] { "v9.9.9" }) == null, "An unparsable current version must never update.");
             });
+            test("Update checks read only published tags from GitHub's release list", delegate
+            {
+                List<string> tags = Updater.ReleaseTags("[{\"tag_name\":\"v0.5.10-preview\",\"draft\":false,\"body\":\"\\\"tag_name\\\":\\\"v9.9.9\\\"\"}," +
+                    "{\"tag_name\":\"v0.6.0\",\"draft\":true},{\"tag_name\":7,\"draft\":false},{\"tag_name\":\"v0.6.1\"},[]]");
+                Assert(tags.Count == 1 && tags[0] == "v0.5.10-preview", "A draft, a malformed entry or text in a release body was read as a tag.");
+                bool refused = false;
+                try { Updater.ReleaseTags("{\"message\":\"API rate limit exceeded\"}"); }
+                catch (InvalidDataException) { refused = true; }
+                Assert(refused, "An error response was read as a release list.");
+            });
             test("Only installed copies look for updates", delegate
             {
                 string root = Path.Combine(Path.GetTempPath(), "DisplayWeave-updater-" + Guid.NewGuid().ToString("N"));
@@ -225,20 +238,87 @@ namespace DisplayWeave
                 }
                 finally { Directory.Delete(root, true); }
             });
-            test("Downloaded setups must match their release checksum", delegate
+            test("Updates install only a setup whose checksum carries a release-key signature", delegate
             {
-                string setup = Path.Combine(Path.GetTempPath(), "DisplayWeave-Setup-" + Guid.NewGuid().ToString("N") + ".exe");
-                try
+                string directory = Path.Combine(Path.GetTempPath(), "DisplayWeave-signed-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(directory);
+                // Ephemeral keys: nothing is stored in the Windows key store.
+                using (CngKey release = CngKey.Create(CngAlgorithm.ECDsaP256))
+                using (CngKey attacker = CngKey.Create(CngAlgorithm.ECDsaP256))
                 {
-                    File.WriteAllText(setup, "abc");
-                    File.WriteAllText(setup + ".sha256", "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD  " + Path.GetFileName(setup) + "\r\n");
-                    Assert(Updater.MatchesChecksum(setup), "A matching setup was rejected.");
-                    File.WriteAllText(setup, "abd");
-                    Assert(!Updater.MatchesChecksum(setup), "A changed setup was accepted.");
-                    File.WriteAllText(setup + ".sha256", "");
-                    Assert(!Updater.MatchesChecksum(setup), "An empty checksum file was accepted.");
+                    string[] trusted = { Convert.ToBase64String(release.Export(CngKeyBlobFormat.EccPublicBlob)) };
+                    Func<string, string, CngKey, string> publish = delegate(string version, string namedVersion, CngKey signer)
+                    {
+                        string setup = Path.Combine(directory, "DisplayWeave-Setup-" + version + ".exe");
+                        File.WriteAllText(setup, "setup " + namedVersion);
+                        string hash;
+                        using (SHA256 sha = SHA256.Create()) hash = BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(setup))).Replace("-", "").ToLowerInvariant();
+                        File.WriteAllText(setup + ".sha256", hash + "  DisplayWeave-Setup-" + namedVersion + ".exe\r\n"); // as build-setup.ps1 writes it
+                        using (ECDsaCng ecdsa = new ECDsaCng(signer))
+                        {
+                            ecdsa.HashAlgorithm = CngAlgorithm.Sha256;
+                            File.WriteAllText(setup + ".sha256.sig", Convert.ToBase64String(ecdsa.SignData(File.ReadAllBytes(setup + ".sha256"))));
+                        }
+                        return setup;
+                    };
+                    try
+                    {
+                        string good = publish("0.6.0", "0.6.0", release);
+                        Assert(Updater.IsSignedRelease(good, "0.6.0", trusted), "A correctly signed setup was refused.");
+                        Assert(!Updater.IsSignedRelease(good, "0.6.0", new string[0]), "A setup was accepted without any pinned key.");
+                        Assert(!Updater.IsSignedRelease(publish("0.6.1", "0.6.1", attacker), "0.6.1", trusted), "A setup signed by another key was accepted.");
+                        string swapped = publish("0.6.2", "0.6.2", release);
+                        File.WriteAllText(swapped, "malicious");
+                        Assert(!Updater.IsSignedRelease(swapped, "0.6.2", trusted), "A replaced setup was accepted.");
+                        string forged; // the attacker can match the checksum to the new file, but cannot sign it
+                        using (SHA256 sha = SHA256.Create()) forged = BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(swapped))).Replace("-", "").ToLowerInvariant();
+                        File.WriteAllText(swapped + ".sha256", forged + "  DisplayWeave-Setup-0.6.2.exe\r\n");
+                        Assert(!Updater.IsSignedRelease(swapped, "0.6.2", trusted), "A rewritten checksum was accepted.");
+                        Assert(!Updater.IsSignedRelease(publish("9.9.9", "0.5.0", release), "9.9.9", trusted), "An older signed setup was accepted under a newer tag.");
+                        string unsigned = publish("0.7.0", "0.7.0", release);
+                        File.Delete(unsigned + ".sha256.sig");
+                        Assert(!Updater.IsSignedRelease(unsigned, "0.7.0", trusted), "A setup without a signature was accepted.");
+                        File.WriteAllText(unsigned + ".sha256.sig", "not base64!");
+                        Assert(!Updater.IsSignedRelease(unsigned, "0.7.0", trusted), "An unreadable signature was accepted.");
+                    }
+                    finally { Directory.Delete(directory, true); }
                 }
-                finally { File.Delete(setup); File.Delete(setup + ".sha256"); }
+            });
+            test("A release key is pinned, so installed copies can verify updates", delegate
+            {
+                Assert(Updater.ReleaseKeys.Length > 0, "No release key is pinned. Run scripts\\sign-release.ps1 -NewKey before building a release.");
+                foreach (string key in Updater.ReleaseKeys)
+                    using (CngKey publicKey = CngKey.Import(Convert.FromBase64String(key), CngKeyBlobFormat.EccPublicBlob))
+                        Assert(publicKey.Algorithm == CngAlgorithm.ECDsaP256, "A pinned release key is not ECDSA P-256.");
+            });
+            test("Diagnostic reports leave out names, paths and identifiers", delegate
+            {
+                string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                string game = @"D:\Some Games\Secret Title\SecretGame.exe";
+                List<string> paths = new List<string> { game };
+                string raw = "Helper failed for " + game + " (SecretGame.exe) in " + profile + @"\AppData\Local\DisplayWeave\data, user " + Environment.UserName +
+                    " on " + Environment.MachineName + @", SID S-1-5-21-1111111111-2222222222-3333333333-1001, other file E:\Tools Folder\other tool.exe and E:\plain\folder.";
+                string hidden = DiagnosticReport.Scrub(raw, paths, false);
+                foreach (string leak in new[] { "Some Games", "Secret", profile, "S-1-5-21", "Tools Folder", "other tool", @"E:\plain" })
+                    Assert(hidden.IndexOf(leak, StringComparison.OrdinalIgnoreCase) < 0, "The report kept " + leak + ": " + hidden);
+                foreach (string name in new[] { Environment.UserName, Environment.MachineName })
+                    if (name.Length > 2) Assert(!Regex.IsMatch(hidden, @"\b" + Regex.Escape(name) + @"\b", RegexOptions.IgnoreCase), "The report kept a user or computer name: " + hidden);
+                Assert(hidden.Contains("App 1") && hidden.Contains("%USERPROFILE%"), "Paths were removed instead of labelled: " + hidden);
+                Assert(DiagnosticReport.Scrub(raw, paths, true).Contains("SecretGame.exe"), "An app name the user chose to include was removed.");
+            });
+            test("Diagnostic reports are Markdown with this computer's displays", delegate
+            {
+                HandledApp app = new HandledApp { Target = new ApplicationIdentity { ExecutablePath = @"D:\Games\SecretGame.exe", Is32Bit = true },
+                    State = HandledAppState.Error, Error = @"Could not load into D:\Games\SecretGame.exe." };
+                string text = DiagnosticReport.Build("Handling active · 1 handled · 0 attaching", new LayoutSettings(), new List<HandledApp> { app },
+                    new[] { "", "A repeated message", "A repeated message" }, false);
+                Assert(text.StartsWith("### DisplayWeave diagnostic report") && text.Contains("| Windows | Windows ") && text.Contains("#### Displays") &&
+                    text.Contains("#### Graphics drivers"), "A section is missing: " + text);
+                Assert(text.Contains("| App 1 | x86 | Error | Could not load into App 1. |"), "The app row is wrong: " + text);
+                Assert(text.IndexOf("SecretGame", StringComparison.OrdinalIgnoreCase) < 0, "An app name was shown without the user's choice.");
+                Assert(Regex.Matches(text, "A repeated message").Count == 1, "A repeated message was listed twice.");
+                foreach (DisplayMonitor monitor in DisplayMonitor.All())
+                    Assert(text.Contains(monitor.DeviceName), "A display is missing: " + monitor.DeviceName);
             });
             report.AppendLine(passed + " passed; " + failed + " failed.");
             string fullReport = Path.GetFullPath(reportPath);

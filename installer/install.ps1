@@ -228,39 +228,62 @@ function Read-CandidateVersion([string]$Directory) {
     return $manifest.version
 }
 
-function Get-PrivateRelease([string]$Destination) {
-    $gh = Get-Command gh -CommandType Application -ErrorAction SilentlyContinue
-    if ($null -eq $gh) { throw 'Install GitHub CLI and run gh auth login, or provide -PackagePath and -ChecksumPath.' }
-    # gh handles authentication itself. Never read or print authentication tokens.
+# Public halves of the release signing keys, the same list as ReleaseKeys in src\DisplayWeave\Updater.cs.
+# scripts\sign-release.ps1 -NewKey or -PinKey adds a key to both.
+$releaseKeys = @('RUNTMSAAAAATu9pkeZZN3cVNNw4GOUxueHEixTzm9R7e7MN0k3itVRAOfmWB0wJJnw1R+TlDITlNIiV/J1hxl/u9rDcSzX0m')
+
+# The release's .sha256 must carry a signature from a pinned key; it names the ZIP, and so its version.
+function Assert-ReleaseSignature([string]$ChecksumPath) {
+    $data = [IO.File]::ReadAllBytes($ChecksumPath)
+    try { $signature = [Convert]::FromBase64String([IO.File]::ReadAllText($ChecksumPath + '.sig').Trim()) }
+    catch { throw 'The release signature is unreadable. Nothing was installed.' }
+    foreach ($key in $releaseKeys) {
+        $publicKey = [Security.Cryptography.CngKey]::Import([Convert]::FromBase64String($key), [Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob)
+        $ecdsa = New-Object Security.Cryptography.ECDsaCng($publicKey)
+        try {
+            $ecdsa.HashAlgorithm = [Security.Cryptography.CngAlgorithm]::Sha256
+            if ($ecdsa.VerifyData($data, $signature)) { return }
+        }
+        catch [Security.Cryptography.CryptographicException] { }
+        finally { $ecdsa.Dispose(); $publicKey.Dispose() }
+    }
+    throw 'The release is not signed with a DisplayWeave release key. Nothing was installed.'
+}
+
+function Get-OnlineRelease([string]$Destination) {
+    # The repository is public: releases are read anonymously and trusted only through their signature.
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $ProgressPreference = 'SilentlyContinue' # the progress bar slows Windows PowerShell downloads several times over
+    $headers = @{ 'User-Agent' = 'DisplayWeave-installer' }
     $tag = $Version
     if ([string]::IsNullOrWhiteSpace($tag)) {
         # GitHub's /releases/latest omits prereleases. DisplayWeave previews
         # should update to the highest release version, including previews, as
         # the app's updater does; a final release beats its own previews.
         # prototype-v* tags belong to the separate prototype app.
-        $listText = & $gh.Source release list --repo $Repository --limit 100 --json tagName,isDraft,publishedAt
-        if ($LASTEXITCODE -ne 0) { throw "Cannot list private releases. Check gh auth status and access to $Repository." }
-        $published = @(($listText -join [Environment]::NewLine | ConvertFrom-Json) | Where-Object { -not $_.isDraft -and $_.tagName -match '^v[0-9]+\.[0-9]+\.[0-9]+' } |
-            Sort-Object { [version]($_.tagName -replace '^v([0-9]+\.[0-9]+\.[0-9]+).*$', '$1') }, { $_.tagName -notmatch '^v[0-9.]+-' }, publishedAt -Descending)
+        $list = Invoke-RestMethod -UseBasicParsing -Headers $headers -Uri "https://api.github.com/repos/$Repository/releases?per_page=100"
+        $published = @($list | Where-Object { -not $_.draft -and $_.tag_name -match '^v[0-9]+\.[0-9]+\.[0-9]+' } |
+            Sort-Object { [version]($_.tag_name -replace '^v([0-9]+\.[0-9]+\.[0-9]+).*$', '$1') }, { $_.tag_name -notmatch '^v[0-9.]+-' }, published_at -Descending)
         if ($published.Count -eq 0) { throw 'No published DisplayWeave releases were found.' }
-        $tag = [string]$published[0].tagName
+        $tag = [string]$published[0].tag_name
     }
     if ($tag -notmatch '^v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z.-]+)?$') {
         throw "Release tag is not a supported version: $tag"
     }
-    $arguments = @('release', 'view', $tag)
-    $arguments += @('--repo', $Repository, '--json', 'tagName,assets')
-    $releaseText = & $gh.Source @arguments
-    if ($LASTEXITCODE -ne 0) { throw "Cannot read the private release. Check gh auth status and access to $Repository." }
-    $release = ($releaseText -join [Environment]::NewLine) | ConvertFrom-Json
+    if (-not $tag.StartsWith('v')) { $tag = 'v' + $tag }
+    $release = Invoke-RestMethod -UseBasicParsing -Headers $headers -Uri "https://api.github.com/repos/$Repository/releases/tags/$tag"
     $packages = @($release.assets | Where-Object { $_.name -match '^DisplayWeave-[A-Za-z0-9.+_-]+\.zip$' })
     if ($packages.Count -ne 1) { throw 'The selected release must contain exactly one DisplayWeave ZIP asset.' }
     $packageName = [string]$packages[0].name
-    $checksumName = $packageName + '.sha256'
-    if (@($release.assets | Where-Object { $_.name -ceq $checksumName }).Count -ne 1) { throw 'The release is missing the matching .zip.sha256 asset.' }
-    & $gh.Source release download $release.tagName --repo $Repository --dir $Destination --pattern $packageName --pattern $checksumName
-    if ($LASTEXITCODE -ne 0) { throw 'Release download failed; no installation changes were made.' }
-    return [pscustomobject]@{ Package = (Join-Path $Destination $packageName); Checksum = (Join-Path $Destination $checksumName); Tag = [string]$release.tagName }
+    $assets = foreach ($name in @($packageName, ($packageName + '.sha256'), ($packageName + '.sha256.sig'))) {
+        $asset = @($release.assets | Where-Object { $_.name -ceq $name })
+        if ($asset.Count -ne 1) { throw "The release is missing $name, so it was not installed." }
+        $asset[0]
+    }
+    foreach ($asset in $assets) { Invoke-WebRequest -UseBasicParsing -Headers $headers -Uri $asset.browser_download_url -OutFile (Join-Path $Destination $asset.name) }
+    $checksum = Join-Path $Destination ($packageName + '.sha256')
+    Assert-ReleaseSignature $checksum
+    return [pscustomobject]@{ Package = (Join-Path $Destination $packageName); Checksum = $checksum; Tag = [string]$release.tag_name }
 }
 
 function Get-DisplayWeaveProcesses([string]$Root, [string]$MigrationDirectory) {
@@ -455,7 +478,7 @@ try {
     if ([string]::IsNullOrWhiteSpace($PackagePath)) {
         $downloadDirectory = Join-Path $temporaryParent ('DisplayWeave-download-' + [Guid]::NewGuid().ToString('N'))
         New-PlainDirectory $downloadDirectory
-        $download = Get-PrivateRelease $downloadDirectory
+        $download = Get-OnlineRelease $downloadDirectory
         $PackagePath = $download.Package
         $ChecksumPath = $download.Checksum
         $requestedVersion = $download.Tag

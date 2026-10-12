@@ -93,7 +93,7 @@ namespace DisplayWeave
             timer.Start();
             // A window fitted from outside first fills the display; fit it as soon as it maximizes, not on the next tick.
             maximizeWatcher = new MaximizeWatcher(TickNow);
-            // Administrator mode never updates: the setup and gh would run elevated from user-writable folders.
+            // Administrator mode never updates: the setup would run elevated from a user-writable folder.
             if (installRoot != null && String.IsNullOrWhiteSpace(automaticExecutableFilter) && !ElevationRestart.IsElevated())
             {
                 updateTimer.Interval = 60000;
@@ -667,6 +667,16 @@ namespace DisplayWeave
             if (app.State != HandledAppState.Error && app.Error.Length > 0)
                 text += "\r\n\r\n" + (app.State == HandledAppState.FittedFromOutside || app.State == HandledAppState.Ready ? "Why its component is not used: " : "Problem: ") + app.Error;
             return text + "\r\n\r\n" + app.Target.ExecutablePath + " (PID " + app.Target.ProcessId + ")";
+        }
+
+        // Built when shown and on each toggle, so it matches what Status & help shows now.
+        private void ShowDiagnosticReport()
+        {
+            DiagnosticReport.ShowDialog(this, Font, delegate(bool includeAppNames)
+            {
+                return DiagnosticReport.Build(engineState.Text.Replace("\n", " · "), settings, fullscreen.HandledApps(),
+                    new[] { fullscreen.LayoutProblem, fullscreen.LastFailure, fullscreen.LastInternalError, internalError, updateNotice }, includeAppNames);
+            });
         }
 
         private void ShowHandledDetails()

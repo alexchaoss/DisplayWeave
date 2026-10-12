@@ -1,0 +1,15 @@
+# Actions are pinned to commit SHAs; Dependabot moves the SHA and its version comment together.
+# Zig (scripts/fetch-tools.ps1) and MinHook (third_party/minhook) are pinned by hash and vendored,
+# so they are updated by hand: Dependabot cannot recompute a pinned archive checksum.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # A new action release waits a week, so a hijacked tag is usually caught upstream first.
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

@@ -1,0 +1,23 @@
+name: Bug report
+description: Something in DisplayWeave did not work as expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        In DisplayWeave, open **Status & help → Diagnostic report…**, review it, choose **Copy to clipboard** and paste it below. It lists the versions, displays, scaling, graphics drivers and handling state, without window titles, paths, or user or computer names.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Include any error message.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostic-report
+    attributes:
+      label: Diagnostic report
+      description: If DisplayWeave does not open, give your Windows version and each display's resolution and scaling instead.
+      placeholder: "### DisplayWeave diagnostic report"
+    validations:
+      required: true

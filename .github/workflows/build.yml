@@ -10,11 +10,16 @@ permissions:
 
 concurrency:
   group: windows-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel on main: a cancelled release job could leave a half-made draft behind.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   build:
-    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     defaults:
       run:
@@ -22,7 +27,7 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -95,6 +100,12 @@ jobs:
         timeout-minutes: 5
         run: ./tests/installer-tests.ps1 -OutputDirectory test-results/ci
 
+      # Users and the setup run install.ps1 in Windows PowerShell 5.1; the step above uses PowerShell 7.
+      - name: Run the installer regression tests in Windows PowerShell 5.1
+        timeout-minutes: 5
+        shell: powershell
+        run: ./tests/installer-tests.ps1 -OutputDirectory test-results/ci/powershell-5.1
+
       # Quiet-mode setup runs against a temporary install root; nothing is launched or registered.
       - name: Build the setup and run its end-to-end checks
         timeout-minutes: 5
@@ -104,17 +115,19 @@ jobs:
 
       - name: Upload test reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: DisplayWeave-test-results-${{ github.sha }}
+          name: DisplayWeave-test-results-${{ matrix.os }}-${{ github.sha }}
           path: |
             test-results/ci/*.txt
             test-results/ci/**/*.txt
           if-no-files-found: warn
           retention-days: 14
 
+      # One package per commit: the release job publishes the windows-2022 build.
       - name: Upload the portable package
-        uses: actions/upload-artifact@v7
+        if: matrix.os == 'windows-2022'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: DisplayWeave-Windows-${{ github.sha }}
           path: |
@@ -126,8 +139,10 @@ jobs:
           compression-level: 0
           retention-days: 14
 
-  # A push to main whose version.txt has no release yet publishes the files the build job
-  # just tested. Installed copies pick the release up through their update check.
+  # A push to main whose version.txt has no release yet turns the files the build job just tested
+  # into a draft release with a build-provenance attestation. Installed copies never see drafts:
+  # the maintainer checks, signs and publishes it with scripts/sign-release.ps1, using a key that
+  # is never on GitHub, so nothing here can ship an update by itself.
   release:
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -135,28 +150,50 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      id-token: write # Sigstore identity for the attestation
+      attestations: write
     steps:
       - name: Check out source
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Download the tested package
-        uses: actions/download-artifact@v8
-        with:
-          name: DisplayWeave-Windows-${{ github.sha }}
-          path: assets
-
-      - name: Publish the release for a new version
+      - name: Find whether this version already has a release
+        id: version
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="$(tr -d '[:space:]' < src/DisplayWeave/version.txt)"
-          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            echo "v$version is already released; bump src/DisplayWeave/version.txt to publish another."
-            exit 0
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # The list includes drafts, so a draft waiting for its signature is not made twice.
+          if gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName' | grep -qxF "v$version"; then
+            echo "v$version already has a release or draft; bump src/DisplayWeave/version.txt to make another."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Download the tested package
+        if: steps.version.outputs.exists != 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: DisplayWeave-Windows-${{ github.sha }}
+          path: assets
+
+      - name: Attest build provenance
+        if: steps.version.outputs.exists != 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            assets/DisplayWeave-*.zip
+            assets/DisplayWeave-Setup-*.exe
+
+      - name: Create the draft release for signing
+        if: steps.version.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
           cd assets
-          gh release create "v$version" "DisplayWeave-$version.zip" "DisplayWeave-$version.zip.sha256" \
-            "DisplayWeave-Setup-$version.exe" "DisplayWeave-Setup-$version.exe.sha256" \
-            --repo "$GITHUB_REPOSITORY" --prerelease --title "DisplayWeave $version" --target "$GITHUB_SHA" --generate-notes
+          gh release create "v$VERSION" "DisplayWeave-$VERSION.zip" "DisplayWeave-$VERSION.zip.sha256" \
+            "DisplayWeave-Setup-$VERSION.exe" "DisplayWeave-Setup-$VERSION.exe.sha256" \
+            --repo "$GITHUB_REPOSITORY" --draft --prerelease --title "DisplayWeave $VERSION" --target "$GITHUB_SHA" --generate-notes
+          echo "Draft v$VERSION is ready. Sign and publish it with: .\scripts\sign-release.ps1 -Version $VERSION"

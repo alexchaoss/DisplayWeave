@@ -4,6 +4,67 @@ Commands recorded below before October 10, 2026 use the old root-level script pa
 
 The virtual-display projection prototype and its evidence moved to the `prototype` branch on October 11, 2026. Entries below that mention prototype or projection checks record what was run at the time.
 
+## Security audit: signed releases, anonymous updates, diagnostic report, CI (0.5.10-preview, October 11, 2026)
+
+Changes on top of `3d08f42`, released as 0.5.10-preview; x64, Windows 11 25H2 build
+26200, 7680 × 2160 display at 125%.
+
+- **Updater** (`Updater.cs`): no `gh`; lists releases from the public GitHub API and
+  downloads the setup, its `.sha256` and `.sha256.sig` from the release download URL.
+  `IsSignedRelease` needs an ECDSA P-256 signature from `ReleaseKeys` over the exact
+  `.sha256` bytes, a line naming `DisplayWeave-Setup-<version>.exe`, and a matching hash.
+  The maintainer created the release key with `sign-release.ps1 -NewKey` (CNG, not exportable),
+  which pinned its public half in `Updater.cs` and `install.ps1`.
+- **install.ps1**: the online route uses the same anonymous API and requires the signature on
+  the ZIP's `.sha256` (`$releaseKeys`); `-PackagePath` installs are unchanged.
+- **Release flow**: CI attests the ZIP and setup and makes a draft; `scripts/sign-release.ps1`
+  (new) creates and pins keys, checks the attestation and checksums, signs and publishes;
+  `release.ps1 -Publish` signs a local build.
+- **Diagnostic report** (`DiagnosticReport.cs`, Status & help → Diagnostic report…), issue
+  templates, `SECURITY.md`.
+- **CI**: actions pinned to commit SHAs (checkout v7.0.1, upload-artifact v7.0.2,
+  download-artifact v8.0.2, attest-build-provenance v4.2.2); `dependabot.yml`; build on
+  `windows-2022` and `windows-2025`; installer tests also in Windows PowerShell 5.1; no
+  cancelling on `main`.
+
+Results:
+
+- `.\scripts\build.ps1 -OutputDirectory <scratch>`, then `--self-test`: layout 20, rules 46,
+  automatic 13, lifecycle 32 of 33 (111 passed). The one failure is the intended gate "A release
+  key is pinned", because no key existed yet; it passes since the key was pinned. New passing cases: release-list parsing;
+  signed setups (accepted with a pinned key; refused without keys, with another key, after
+  the setup is replaced, after the checksum is rewritten to match, for an old version
+  republished under a newer tag, and with a missing or unreadable signature); report
+  scrubbing (profile path, user and computer names, SID, app paths and names, other paths
+  with spaces); report shape (sections, scrubbed app row, every display listed).
+- Scratch harness in Windows PowerShell 5.1 (ephemeral keys, nothing in the key store), 10 of
+  10: `install.ps1`'s own `Assert-ReleaseSignature`, extracted by the parser, accepted a
+  pinned signature and refused another key, a changed checksum, an empty key list and an
+  unreadable signature; `sign-release.ps1 -PinKey` on a copy of the repository wrote two
+  keys once into both files, kept CRLF and no BOM, refused a non-key, and the pinned
+  `install.ps1` verified with its own list.
+- Live against the public repository (scratch `TEMP` and install root): the updater, run from
+  a `csc`-built host like `DisplayWeave.exe` (default protocols `Ssl3, Tls`), found
+  `0.5.9-preview` from `0.5.6-preview` once TLS 1.2 was added (checked before signatures were
+  required). `install.ps1` with and without `-Version` found `v0.5.9-preview` and refused it:
+  "The release is missing DisplayWeave-0.5.9-preview.zip.sha256.sig"; nothing installed,
+  no temporary files left. `sign-release.ps1 -Directory` without a key stopped with the
+  `-NewKey` instruction.
+- The report on this computer: Windows 11 25H2 build 26200, `\\.\DISPLAY1` 7680 × 2160,
+  work area 7680 × 2100, 125%, its adapter and driver version, layout
+  1980 × 2100, 3720 × 2100, 1980 × 2100. The dialog, rendered by a probe named
+  `FullscreenProbe.exe` so the running app skipped it, opened with Copy focused and the
+  text unselected.
+- `tests/installer-tests.ps1` in Windows PowerShell 5.1: 20 passed. PowerShell 7 is not
+  installed here.
+- With the key pinned, `.\scriptselease.ps1` (no publish) at 0.5.10-preview: managed and
+  native checks passed, installer tests 20, setup tests 6. Local ZIP SHA-256 `2b96209f…`,
+  setup `80aa0884…`; the published files are CI's rebuild, not these.
+- Not run: the full app with the new button (the installed DisplayWeave holds the
+  single-instance lock), the in-app update hand-off, `sign-release.ps1`'s draft download,
+  `gh attestation verify` and publish steps, and CI itself (matrix, 5.1 leg, attestation).
+  Native code and the setup are unchanged and were not rebuilt.
+
 ## Version 0.5.2 Maximize in region
 
 Adds a rule action that never attaches the native component: while a matching

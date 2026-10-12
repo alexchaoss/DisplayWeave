@@ -13,7 +13,7 @@ Windows 10/11 x64 is required.
 ### With the setup (recommended)
 
 Download `DisplayWeave-Setup-<version>.exe` from the
-[private releases page](https://github.com/alexchaoss/DisplayWeave/releases) and run
+[releases page](https://github.com/alexchaoss/DisplayWeave/releases) and run
 it. It installs or updates DisplayWeave for your Windows account (no administrator
 rights), keeps your regions and app rules, can turn on **Start DisplayWeave when I
 sign in**, and adds DisplayWeave to **Settings → Apps → Installed apps**. A running
@@ -36,15 +36,22 @@ For scripted use: `--quiet`, `--no-launch`, `--startup Enable|Disable|Preserve`,
 
 ### Automatic updates
 
-From 0.5.5, an installed DisplayWeave checks the releases page a minute after it
-starts and then every six hours. Because the repository is private, it does this
-through the [GitHub CLI](https://cli.github.com/): install it and run `gh auth login`
-once with an account that can access this repository. DisplayWeave never reads or
-stores your GitHub credentials. Without a signed-in GitHub CLI, the check is skipped
-and **Status & help** says why.
+An installed DisplayWeave checks the public
+[releases page](https://github.com/alexchaoss/DisplayWeave/releases) a minute after
+it starts and then every six hours. It reads the releases anonymously over HTTPS: no
+GitHub account, token or GitHub CLI is needed. If the check fails (for example while
+offline), **Status & help** says why and it tries again later.
 
-A newer release's setup is downloaded and checked against its SHA-256 file. It then
-installs by itself as soon as the DisplayWeave window is closed and no app is
+Versions 0.5.5 to 0.5.9 checked through a signed-in GitHub CLI instead. If you run one
+of those without it, install the newest setup once by hand; later updates then arrive
+by themselves.
+
+A newer release's setup is downloaded with its SHA-256 file and that file's signature.
+DisplayWeave installs it only when the signature comes from a DisplayWeave release key
+and the setup matches the checksum. The signing key is kept off GitHub, so someone who
+gains access to the repository or its releases cannot push an update to installed
+copies. A release without a valid signature is refused, and **Status & help** says so.
+A verified setup installs by itself as soon as the DisplayWeave window is closed and no app is
 maximized or fullscreen in a region, so a running game is never resized by the
 restart. Until then the tray menu offers **Install DisplayWeave <version> now**.
 Your regions, app rules and startup choice are kept.
@@ -52,22 +59,23 @@ Your regions, app rules and startup choice are kept.
 ### With the install script
 
 Download `install.ps1` from the
-[private releases page](https://github.com/alexchaoss/DisplayWeave/releases).
-For online updates, install the [GitHub CLI](https://cli.github.com/) and sign in
-with an account that can access this repository:
+[releases page](https://github.com/alexchaoss/DisplayWeave/releases).
+Without a package path, the script downloads the newest release anonymously over
+HTTPS; no GitHub account is needed:
 
 ```powershell
-gh auth login
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
 Run the same script again to install the newest published release, including
-preview releases. To choose a release, add `-Version v0.5.9-preview`.
-The script verifies the release ZIP's SHA-256 checksum before installation.
-It does not request administrator rights or store a GitHub token.
+preview releases. To choose a release, add `-Version v<version>`. Like the app's
+updater, the script installs a downloaded release only when its checksum carries a
+DisplayWeave release-key signature; releases up to 0.5.9 have none, so it refuses
+them. It then verifies the ZIP's SHA-256 checksum. It does not request administrator
+rights.
 
-You can also download the ZIP and its `.sha256` file from the releases page and
-install without the GitHub CLI:
+You can also download the ZIP and its `.sha256` file from the releases page yourself
+and install them, which skips the signature check:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -PackagePath .\DisplayWeave-0.5.9-preview.zip -ChecksumPath .\DisplayWeave-0.5.9-preview.zip.sha256
@@ -127,6 +135,14 @@ rename them; exit it. If DisplayWeave hits an internal error with one app, it le
 only that app alone and shows the error on its row; every other app stays handled.
 Choose **Apply saved rules** or Force fullscreen to retry that app. Status & help keeps
 the technical details for a bug report.
+
+To report a bug, choose **Diagnostic report…** at the bottom of Status & help. It shows
+a Markdown summary for you to review: DisplayWeave and Windows versions, each display's
+size, work area, scaling and adapter, graphics driver versions, the layout and each
+handled app's status. It has no window titles, paths, or user or computer names. App
+file names appear only if you tick **Include app file names**. Choose **Copy to
+clipboard**, then **Open a new issue** and paste it. Report security problems privately,
+as [SECURITY.md](.github/SECURITY.md) explains.
 
 1. On **Layout**, choose a display and optionally a preset. Set **Grid every (px)** to the desired ruler
    spacing (for example 10, 50, or 100 pixels). Presets are computed for the display's size, shape

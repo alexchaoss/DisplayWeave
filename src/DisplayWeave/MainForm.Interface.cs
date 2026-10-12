@@ -390,11 +390,15 @@ namespace DisplayWeave
             startup.Controls.Add(startWithWindows, 0, 0);
             startup.Controls.Add(startupHelp, 0, 1);
             body.Controls.Add(startup, 0, 6);
-            var bottom = Table(2, 1);
+            var bottom = Table(3, 1);
             bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
             bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
             bottom.Controls.Add(Caption("Editing pauses handling. Save layout applies changes and resumes it."), 0, 0);
-            bottom.Controls.Add(Button("Exit DisplayWeave", ExitApplication), 1, 0);
+            var report = Button("Diagnostic report…", ShowDiagnosticReport);
+            hints.SetToolTip(report, "Preview and copy a privacy-safe report to paste into a GitHub issue.");
+            bottom.Controls.Add(report, 1, 0);
+            bottom.Controls.Add(Button("Exit DisplayWeave", ExitApplication), 2, 0);
             body.Controls.Add(bottom, 0, 7);
         }
 
