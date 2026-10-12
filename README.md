@@ -51,9 +51,12 @@ DisplayWeave installs it only when the signature comes from a DisplayWeave relea
 and the setup matches the checksum. The signing key is kept off GitHub, so someone who
 gains access to the repository or its releases cannot push an update to installed
 copies. A release without a valid signature is refused, and **Status & help** says so.
-A verified setup installs by itself as soon as the DisplayWeave window is closed and no app is
-maximized or fullscreen in a region, so a running game is never resized by the
-restart. Until then the tray menu offers **Install DisplayWeave <version> now**.
+A verified setup installs by itself as soon as the DisplayWeave window is closed and no
+app with DisplayWeave's component loaded (an app with a Force rule) is maximized or
+fullscreen in a region, so such a game is never resized by the restart. Windows fitted
+from outside do not delay it: from 0.5.11 they stay in their regions and the new
+version takes over the maximized ones. Until the update installs, the tray menu
+offers **Install DisplayWeave <version> now**.
 Your regions, app rules and startup choice are kept.
 
 ### With the install script
@@ -122,12 +125,14 @@ The window title and the tray icon's tooltip show the installed version.
 
 **Status & help** lists every app DisplayWeave handles or tried to handle, with its
 display, region and status: **Working**, **Starting**, **Not active**, **Ready**, **Fitted
-from outside** or **Error**. **Ready** means nothing is loaded into the app and it is
-fitted into its region from outside once maximized, as for Chromium-based apps. Windows
-first maximizes such a window to the whole display and DisplayWeave fits it within about
-one frame; Windows' maximize animation hides that frame. With window animations turned
-off in Windows, the full-width frame can show briefly. An app with a working component
-goes straight to its region. Select a row to read exactly what happened and what to do.
+from outside** or **Error**. **Ready** means nothing is loaded into the app: once it is
+maximized or in borderless fullscreen, DisplayWeave fits it into its region from outside.
+From 0.5.11 automatic handling treats every app this way; **Working**, **Starting** and
+**Not active** are for apps with a Force rule. Windows first maximizes a window to the
+whole display and DisplayWeave fits it within about one frame; Windows' maximize
+animation hides that frame. With window animations turned off in Windows, the
+full-width frame can show briefly. An app with a working component goes straight to
+its region. Select a row to read exactly what happened and what to do.
 The status at the top right opens this list. When the layout's display is missing
 or its regions no longer fit it, the status reads **Layout needs attention** and the
 message names the displays Windows reports. Another display or region tool can
@@ -158,18 +163,19 @@ as [SECURITY.md](.github/SECURITY.md) explains.
    and choose **Save layout**. Saving writes
    the file, applies the layout, and resumes region handling. The green status
    line confirms the saved region count and grid spacing; unsaved edits are marked.
-4. Move an ordinary app window into the desired region, then maximize it or use its
-   fullscreen command. DisplayWeave prepares eligible apps automatically. Normal
-   windows stay freely movable. If a window straddles regions, the greatest
-   overlap chooses its region (the window center breaks ties).
-5. If automatic handling does not work for an app, open **App rules** and use
-   **Drag onto app** (or the window dropdown). Choose its target region on that
-   same tab, then **Force fullscreen**. Wait for the ready status and try the
-   app's fullscreen command again.
+4. Move an app window into the desired region, then maximize it or switch it to
+   borderless (windowed) fullscreen. DisplayWeave fits the window into that region
+   from outside; nothing is loaded into the app. Exclusive fullscreen is not
+   confined. Normal windows stay freely movable. If a window straddles regions, the
+   greatest overlap chooses its region (the window center breaks ties).
+5. If an app needs its own fullscreen mode confined, or keeps resizing itself back,
+   open **App rules** and use **Drag onto app** (or the window dropdown). Choose its
+   target region on that same tab, then **Force fullscreen**. This loads
+   DisplayWeave's component into that app; read
+   [Automatic handling and the component](#automatic-handling-and-the-component)
+   first. Wait for the ready status and try the app's fullscreen command again.
 6. Some apps refuse DisplayWeave's component (Status & help reports a loader
-   failure). Run those in their **windowed** mode and maximize
-   them: automatic handling then fits the maximized window into its current region
-   from outside. See [Apps that refuse the component](#apps-that-refuse-the-component).
+   failure). Their Force rule then falls back to the outside fit.
 7. Use **Ignore this app** to save an exclusion, **Restore selected** to release
    it for this session, or **Pause handling** to suspend every rule.
 
@@ -220,40 +226,52 @@ Shortcuts: **Ctrl+Alt+Shift+1…9** saves a region rule for the foreground app;
 **Ctrl+Alt+Shift+0** releases it; **Ctrl+Alt+Shift+Backspace** pauses all rules.
 The interface reports shortcuts already used by another program.
 
-## Apps that refuse the component
+## Automatic handling and the component
 
-Some apps refuse to load DisplayWeave's component, so a
-Force rule cannot keep them in a region. From version 0.5.3, automatic handling (and a Force rule)
-falls back for any app whose component did not load: run the app windowed and
-maximize it from its title bar, and DisplayWeave moves the maximized window from
-outside so its visible frame fills the region the window was in. No rule is needed.
-Automatic handling still tries the component first, once per window.
+From 0.5.11, automatic handling never loads anything into an app. When an app's window
+is maximized, or switches to borderless (windowed) fullscreen, in a region, DisplayWeave
+moves the window from outside so its visible frame fills that region. No rule is needed.
+Earlier versions loaded DisplayWeave's component into every eligible app; an app that
+received it from an earlier version keeps it, inactive, until the app restarts.
 
-**Maximize in region** on **App rules** does the same for one fixed region and never
-loads, or tries to load, anything into that app; use it for apps that should not
-receive a load attempt at all.
+- **Maximized windows** keep their title bar, as with any maximized window.
+- **Borderless fullscreen**: a window without a title bar that covers its whole
+  monitor is fitted into its region. Always-on-top, click-through and never-activated
+  windows, such as overlays and screen-capture tools, are left alone.
+- **Exclusive fullscreen** takes over the display and is never confined. Switch the
+  game to its borderless or windowed mode.
 
-In both cases the title bar stays visible, as with any maximized window.
-Un-maximizing hands the window back to Windows at its normal position. Pausing,
-releasing, removing the rule, turning automatic handling off or exiting DisplayWeave returns a still-maximized
-window to the whole monitor. An app that keeps changing its own maximized size is
-left alone after three moves, with a message in Status & help.
-
-The app still sees the whole monitor, so its own fullscreen or "windowed
-fullscreen" modes still fill the monitor. Each move resizes the app's window; in-game
+The app still sees the whole monitor. A game that keeps changing its own size back
+is left alone after three moves, with a message in Status & help; give it a Force
+rule, or run it windowed and maximize it. Each move resizes the app's window; in-game
 overlays from other programs that hook a game's graphics can crash some games on a
 resize, so disable them if that happens.
-A rules file containing a Maximize in region rule cannot be read by 0.5.1 or older.
+
+**Force fullscreen** (or a **Ctrl+Alt+Shift+1…9** shortcut) loads DisplayWeave's
+component into that one app. The app then sees its region as its monitor, so its own
+fullscreen modes stay in the region too. Anti-cheat software can treat a loaded
+component as tampering: use Force rules only for apps whose terms allow it. An app
+that refuses the component falls back to the outside fit.
+
+**Maximize in region** pins an app to one fixed region, wherever its window is, and
+never loads anything into it. A rules file containing a Maximize in region rule cannot
+be read by 0.5.1 or older.
+
+Un-maximizing or leaving fullscreen hands the window back to the app and Windows.
+Pausing, releasing, removing the rule, turning automatic handling off or exiting
+DisplayWeave returns a still-maximized window to the whole monitor, and a borderless
+fullscreen window to cover its whole monitor again.
 
 ## Chromium-based apps
 
 Browsers and desktop apps built on Chromium stop themselves (a deliberate crash) when
 their window handling is hooked. From 0.5.9, DisplayWeave never loads anything into a
 window of Chromium's `Chrome_WidgetWin_*` class: automatic handling and Force rules
-use the outside maximize fit described above, and a manual Force request explains why.
-The native helper refuses these windows too. Their own fullscreen mode still fills the
-monitor. An app hooked by 0.5.6 keeps that component until it restarts; it does nothing
-while no DisplayWeave helper controls it, but restart the app if it still crashes.
+use the outside fit described above, and a manual Force request explains why.
+The native helper refuses these windows too. From 0.5.11 their own fullscreen mode
+counts as borderless fullscreen and is fitted from outside too. An app hooked by 0.5.6
+keeps that component until it restarts; it does nothing while no DisplayWeave helper
+controls it, but restart the app if it still crashes.
 
 ## Launcher exclusion
 
@@ -305,7 +323,8 @@ or protections.
 
 ## Fullscreen engine
 
-Version 0.5 uses a USER32 monitor/window engine. An eligible app sees the selected display as the configured virtual regions. Monitor enumeration,
+Version 0.5 uses a USER32 monitor/window engine. From 0.5.11 it is loaded only into
+apps with a Force rule. Such an app sees the selected display as the configured virtual regions. Monitor enumeration,
 monitor lookup, monitor/work-area information and primary screen metrics agree
 with that layout. Other physical displays stay available. Window positioning,
 placement and maximize messages constrain the selected window to its region.
@@ -371,8 +390,8 @@ version files. Release archives contain no personal settings.
 ## Scope of this preview
 
 - Consistent virtual-monitor geometry for 32-bit and 64-bit Win32 applications.
-- Automatic maximize and borderless fullscreen handling, with manual Force rules
-  for applications that need a fixed region.
+- Automatic maximize and borderless fullscreen handling from outside the app, with
+  Force rules that load the component for apps that need it.
 - A Direct3D 11 windowed rendering fixture exercises monitor APIs, layout changes,
   restoration, loading, and continued rendering; see `TESTING.md` for actual results.
 - No graphics-API exclusive-fullscreen interception in the new engine. Commercial

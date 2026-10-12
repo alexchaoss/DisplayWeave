@@ -103,8 +103,9 @@ namespace DisplayWeave
             FormClosing += HandleFormClosing;
         }
 
-        // Checks the releases every six hours. A downloaded update installs by itself while this window
-        // is closed and no app is maximized or fullscreen in a region, so a running game is never resized.
+        // Checks the releases every six hours. A downloaded update installs by itself while this window is
+        // closed and no hooked app is maximized or fullscreen in a region, so a running game is never resized.
+        // Windows fitted from outside stay where they are; the new version adopts them.
         private void UpdateTick()
         {
             if (updateSetup != null)
@@ -137,9 +138,9 @@ namespace DisplayWeave
             updateVersion = version;
             trayUpdate.Text = "Install DisplayWeave " + version + " now";
             trayUpdate.Visible = true;
-            updateNotice = "DisplayWeave " + version + " is ready. It installs when this window is closed and no app is maximized or fullscreen in a region.";
+            updateNotice = "DisplayWeave " + version + " is ready. It installs when this window is closed and no game or other hooked app is maximized or fullscreen in a region.";
             if (!Visible && !fullscreen.HasExpandedApp) { InstallUpdate(); return; }
-            trayIcon.ShowBalloonTip(5000, "DisplayWeave " + version + " is ready", "It installs when no app is maximized or fullscreen in a region. To install now, choose it in the tray menu.", ToolTipIcon.Info);
+            trayIcon.ShowBalloonTip(5000, "DisplayWeave " + version + " is ready", "It installs when no game or other hooked app is maximized or fullscreen in a region. To install now, choose it in the tray menu.", ToolTipIcon.Info);
         }
 
         private void InstallUpdate()
@@ -610,9 +611,9 @@ namespace DisplayWeave
             "DisplayWeave is starting its component in this app. This normally takes a few seconds.",
             "DisplayWeave's component runs in this app: maximize and fullscreen stay inside its region.",
             "DisplayWeave's component is loaded but not confining this app right now: handling is paused, the window is on another display, or its rule changed.",
-            "Nothing is loaded into this app. When you maximize it from its title bar, DisplayWeave fits the window into its region from outside. Exclusive fullscreen is not confined.",
+            "Nothing is loaded into this app. DisplayWeave fitted its maximized or borderless fullscreen window into its region from outside. Exclusive fullscreen is not confined.",
             "",
-            "Nothing is loaded into this app. Maximize it from its title bar and DisplayWeave fits the window into this region from outside. Its own fullscreen mode still fills the monitor."
+            "Nothing is loaded into this app. Maximize it, or use its borderless (windowed) fullscreen mode, and DisplayWeave fits the window into this region from outside. Exclusive fullscreen still fills the monitor."
         };
 
         // Rebuilt only when a row changes, so the selection survives the 250 ms refresh.
@@ -710,7 +711,8 @@ namespace DisplayWeave
         protected override void WndProc(ref Message m)
         {
             if (m.Msg == Program.ShowSettingsMessage) { ShowSettingsWindow(); return; }
-            if (m.Msg == Program.ExitForUpdateMessage) { ExitApplication(); return; }
+            // The new version adopts the windows fitted from outside where they are, so they are not returned first.
+            if (m.Msg == Program.ExitForUpdateMessage) { fullscreen.LeaveFittedWindows(); ExitApplication(); return; }
             if (m.Msg == 0x312)
             {
                 int index = m.WParam.ToInt32() - 800;

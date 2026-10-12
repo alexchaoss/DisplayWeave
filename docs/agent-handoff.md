@@ -11,7 +11,7 @@ On October 11 the user moved the experimental virtual-display prototype off `mai
 | Area | State |
 | --- | --- |
 | Repository layout | `src/DisplayWeave`, `src/DisplayWeave.Core`, `native/legacy`, `scripts`, `installer`, `tests`. See the [runbook](development.md#repository-layout). |
-| App | `0.5.10-preview`. Region editor, rules, tray, sign-in startup, setup and uninstaller (`DisplayWeave-Setup-<version>.exe`), and signed automatic updates: the updater and `install.ps1` read the public releases anonymously over HTTPS (0.5.5 to 0.5.9 used the user's signed-in `gh`) and install only releases whose `.sha256` carries a pinned release-key signature (runbook, release flow). Status & help has **Diagnostic report…**. Updates are checked every six hours and installed only while the window is hidden and no app is maximized or fullscreen in a region. When the component does not load, automatic handling fits a maximized window into its current region from outside; the **Maximize in region** rule does the same without any load attempt. Default install root: `%LOCALAPPDATA%\DisplayWeave`. |
+| App | `0.5.10-preview`. Region editor, rules, tray, sign-in startup, setup and uninstaller (`DisplayWeave-Setup-<version>.exe`), and signed automatic updates: the updater and `install.ps1` read the public releases anonymously over HTTPS (0.5.5 to 0.5.9 used the user's signed-in `gh`) and install only releases whose `.sha256` carries a pinned release-key signature (runbook, release flow). Status & help has **Diagnostic report…**. Updates are checked every six hours and installed only while the window is hidden and no hooked app is maximized or fullscreen in a region; from 0.5.11 windows fitted from outside stay in place and the new version adopts them (0.5.9 and 0.5.10 also wait for any maximized window, so their updates in practice need the tray item). From 0.5.11 (committed, not yet released) automatic handling never loads the component: it fits maximized and borderless fullscreen windows into their current region from outside, skipping always-on-top, click-through and never-activated windows (user decision, 2026-10-11, to avoid injecting into games). Force rules and the Ctrl+Alt+Shift shortcuts still load it; the live hook fixtures keep automatic loading through `AutomaticExecutableFilter`. The **Maximize in region** rule pins one region without any load attempt. Default install root: `%LOCALAPPDATA%\DisplayWeave`. |
 | Engine library | `DisplayWeave.Core.dll` (`src/DisplayWeave.Core`) has no UI reference; `RegionService` holds the app's actions for the window or a headless host (README, "Use the engine without the UI"). |
 | Administrator mode | Skips updates and starts native helpers from a copy under `%ProgramFiles%\DisplayWeave` that only administrators can change. Covered by self-tests; not yet run in a live elevated session. |
 | Prototype | `prototype` branch only: DisplayWeave Prototype 0.1.0-preview plus the October 11 fix that runs its administrator step from hash-checked Program Files copies (verified unelevated only). A copy installed earlier in `%LOCALAPPDATA%\DisplayWeavePrototype` is untouched by this move. |
@@ -30,7 +30,7 @@ The user's main game refuses `RegionHook.dll` by its own protection; a clean ret
 
 ## Known limits
 
-- Apps that refuse the component get the outside maximize fit only, not fullscreen inside a region.
+- Without a Force rule, apps get only the outside fit: exclusive fullscreen is never confined, and a borderless game that resizes itself back is left alone after three moves. The borderless fit is checked only by self-tests on hidden in-process windows, not yet against a real game or a browser's fullscreen.
 - The repository became public on October 11, 2026. Every earlier Actions run failed on account billing; whether public runs succeed has not been observed yet. The manual route is `scripts/release.ps1 -Publish`.
 - Apps that are not DPI-aware are confined at the wrong size above 100% scaling: the native hook reports physical region coordinates to a process whose coordinates Windows scales.
 - The first automatic update can only be observed once a release newer than the installed 0.5.6 exists.
@@ -47,7 +47,7 @@ Remote: [alexchaoss/DisplayWeave](https://github.com/alexchaoss/DisplayWeave) (`
 
 ## Proposed next steps
 
-1. The user tests their game windowed and maximized with the installed app.
+1. The user tests their game windowed and maximized, and in borderless fullscreen, with 0.5.11.
 2. One **Restart as administrator** run to confirm the Program Files helper copy, attach and cleanup.
 3. Confirm CI built and published `v0.5.6-preview` from the push to the public repository (or publish manually), then observe the first automatic update from 0.5.6.
 4. Make the native hook convert region coordinates for apps that are not DPI-aware.

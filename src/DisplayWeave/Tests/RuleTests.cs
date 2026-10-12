@@ -309,6 +309,84 @@ namespace DisplayWeave
                         }
                     }
                 });
+                test("An update leaves fitted windows in their regions and the next version adopts them", delegate
+                {
+                    using (RefusingWindow window = new RefusingWindow())
+                    {
+                        DisplayMonitor primary = DisplayMonitor.FromRectangle(new Rectangle(0, 0, 1, 1));
+                        LayoutSettings layout = new LayoutSettings { MonitorDevice = primary.DeviceName };
+                        ApplicationIdentity editor = new ApplicationIdentity { ExecutablePath = @"C:\Apps\Editor.exe", WindowClass = "EditorWindow",
+                            ProcessId = (uint)System.Diagnostics.Process.GetCurrentProcess().Id, CreationTime = 1, Handle = window.Handle };
+                        ApplicationRules rules = new ApplicationRules();
+                        rules.Rules.Add(new ApplicationRule { ExecutablePath = editor.ExecutablePath, WindowClass = editor.WindowClass, DisplayName = "Editor",
+                            Action = ApplicationAction.MaximizeInRegion, MonitorDevice = primary.DeviceName, ZoneId = layout.Zones[0].Id });
+                        Rectangle region = layout.Zones[0].ToPixels(layout.UseWorkArea ? primary.WorkingArea : primary.Bounds);
+                        WindowCandidate[] windows = { new WindowCandidate { Handle = window.Handle, Title = "Editor", Identity = editor } };
+                        using (FullscreenController current = new FullscreenController())
+                        {
+                            current.Tick(windows, rules, layout);
+                            Assert(window.VisibleFrame == region, "The maximized window was not fitted: " + window.VisibleFrame + " instead of " + region + ".");
+                            Assert(!current.HasExpandedApp, "A window fitted from outside held back an update.");
+                            current.LeaveFittedWindows(); // as when the setup asks DisplayWeave to exit for an update
+                        }
+                        Assert(window.VisibleFrame == region, "Exiting for an update returned a fitted window to the whole display.");
+                        using (FullscreenController next = new FullscreenController())
+                        {
+                            next.Tick(windows, rules, layout);
+                            Assert(window.VisibleFrame == region && next.HandledApps().Exists(delegate(HandledApp app) { return app.State == HandledAppState.FittedFromOutside; }),
+                                "The next version did not adopt the window already in its region.");
+                        }
+                        // Adopted windows are returned on an ordinary exit like any other fit; that path inspects the window,
+                        // which TryInspect never does for this test process, so it is not repeated here.
+                    }
+                });
+                test("Automatic handling fits a maximized window from outside and starts no helper", delegate
+                {
+                    using (RefusingWindow window = new RefusingWindow())
+                    {
+                        DisplayMonitor primary = DisplayMonitor.FromRectangle(new Rectangle(0, 0, 1, 1));
+                        LayoutSettings layout = new LayoutSettings { MonitorDevice = primary.DeviceName };
+                        ApplicationIdentity editor = new ApplicationIdentity { ExecutablePath = @"C:\Apps\Editor.exe", WindowClass = "EditorWindow",
+                            ProcessId = (uint)System.Diagnostics.Process.GetCurrentProcess().Id, CreationTime = 1, Handle = window.Handle };
+                        WindowCandidate[] windows = { new WindowCandidate { Handle = window.Handle, Title = "Editor", Identity = editor } };
+                        using (FullscreenController controller = new FullscreenController())
+                        {
+                            controller.Tick(windows, new ApplicationRules(), layout);
+                            Assert(controller.Count == 0 && controller.PendingCount == 0, "Automatic handling started the component.");
+                            Assert(layout.Zones.Exists(delegate(Zone zone) { return zone.ToPixels(primary.WorkingArea) == window.VisibleFrame; }),
+                                "The maximized window was not fitted into a region: " + window.VisibleFrame + ".");
+                        }
+                    }
+                });
+
+                test("Borderless fullscreen windows are fitted from outside and overlays are left alone", delegate
+                {
+                    DisplayMonitor primary = DisplayMonitor.FromRectangle(new Rectangle(0, 0, 1, 1));
+                    LayoutSettings layout = new LayoutSettings { MonitorDevice = primary.DeviceName };
+                    Rectangle region = layout.Zones[0].ToPixels(layout.UseWorkArea ? primary.WorkingArea : primary.Bounds);
+                    foreach (int extended in new[] { 0, 0x20, 0x08, 0x08000000 }) // none, WS_EX_TRANSPARENT, WS_EX_TOPMOST, WS_EX_NOACTIVATE
+                    {
+                        using (BorderlessWindow window = new BorderlessWindow(primary.Bounds, extended))
+                        {
+                            ApplicationIdentity player = new ApplicationIdentity { ExecutablePath = @"C:\Apps\Player.exe", WindowClass = "PlayerWindow",
+                                ProcessId = (uint)System.Diagnostics.Process.GetCurrentProcess().Id, CreationTime = 1, Handle = window.Handle };
+                            ApplicationRules rules = new ApplicationRules();
+                            rules.Rules.Add(new ApplicationRule { ExecutablePath = player.ExecutablePath, WindowClass = player.WindowClass, DisplayName = "Player",
+                                Action = ApplicationAction.MaximizeInRegion, MonitorDevice = primary.DeviceName, ZoneId = layout.Zones[0].Id });
+                            WindowCandidate[] windows = { new WindowCandidate { Handle = window.Handle, Title = "Player", Identity = player } };
+                            using (FullscreenController controller = new FullscreenController())
+                            {
+                                controller.Tick(windows, rules, layout);
+                                bool fitted = controller.HandledApps().Exists(delegate(HandledApp app) { return app.State == HandledAppState.FittedFromOutside; });
+                                if (extended == 0) Assert(window.Bounds == region && fitted, "The borderless fullscreen window was not fitted: " + window.Bounds + " instead of " + region + ".");
+                                else Assert(window.Bounds == primary.Bounds && !fitted, "An overlay window was moved; extended style 0x" + extended.ToString("X") + ".");
+                            }
+                        }
+                    }
+                    // Not covered here: staying tracked in its region and the return to the whole monitor. Both need a
+                    // window in another process, because the engine never inspects its own.
+                });
+
                 test("Native launcher rejection remains distinct from an ordinary unsupported operation", delegate
                 {
                     ApplicationIdentity target = new ApplicationIdentity { ExecutablePath = @"C:\Apps\Battle.net.exe", ProcessId = 90 };
@@ -784,6 +862,26 @@ namespace DisplayWeave
         }
 
         // Hidden and maximized; like Chromium, it refuses every move or resize in WM_WINDOWPOSCHANGING while maximized.
+        // A hidden window without a title bar, as a game in borderless fullscreen or an overlay.
+        private sealed class BorderlessWindow : System.Windows.Forms.Form
+        {
+            private readonly int extended;
+
+            internal BorderlessWindow(Rectangle bounds, int extended)
+            {
+                this.extended = extended;
+                FormBorderStyle = System.Windows.Forms.FormBorderStyle.None;
+                StartPosition = System.Windows.Forms.FormStartPosition.Manual;
+                Bounds = bounds;
+                CreateHandle();
+            }
+
+            protected override System.Windows.Forms.CreateParams CreateParams
+            {
+                get { System.Windows.Forms.CreateParams parameters = base.CreateParams; parameters.ExStyle |= extended; return parameters; }
+            }
+        }
+
         private sealed class RefusingWindow : System.Windows.Forms.Form
         {
             [DllImport("user32.dll")] private static extern bool IsZoomed(IntPtr handle);

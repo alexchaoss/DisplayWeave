@@ -4,6 +4,37 @@ Commands recorded below before October 10, 2026 use the old root-level script pa
 
 The virtual-display projection prototype and its evidence moved to the `prototype` branch on October 11, 2026. Entries below that mention prototype or projection checks record what was run at the time.
 
+## Automatic handling without the component (0.5.11-preview, October 11, 2026)
+
+Changes on top of `046d4e8`; x64, same computer and display as below.
+
+- **Automatic handling never starts a helper** (`FullscreenController.Tick`): it fits maximized
+  and borderless fullscreen windows from outside (`FitFromOutside`). Force rules and the
+  Ctrl+Alt+Shift shortcuts still load the component. The live hook fixtures
+  (`AutomaticControllerIntegration`, `--auto-test-executable`) set `AutomaticExecutableFilter`,
+  which keeps automatic loading for that one executable.
+- **Borderless fullscreen** (`BorderlessFullscreen`): no `WS_CAPTION` and a visible frame within
+  2 px of its monitor, or of its region once fitted. `WS_EX_TOPMOST`, `WS_EX_TRANSPARENT` and
+  `WS_EX_NOACTIVATE` windows are skipped. The return covers the monitor's full bounds.
+- **Updates**: `HasExpandedApp` counts only hooked apps; DisplayWeave forgets its outside fits
+  (`LeaveFittedWindows`) before exiting for an update, and the next version adopts a maximized
+  window already in its region.
+
+Results:
+
+- `.\scriptsuild.ps1 -OutputDirectory <scratch>`, then `--self-test`: layout 20, rules 49,
+  automatic 13, lifecycle 33 (115 passed, 0 failed). New cases: an update leaves fitted windows
+  and the next version adopts them; automatic handling fits a hidden maximized window into a
+  region and starts no helper; a hidden borderless window covering the primary display is
+  fitted into region 1, and the same window with each overlay style stays where it is.
+- `.\scriptselease.ps1` (no `-Publish`): the same 115 managed tests, native policy and IPC
+  checks on x64 and x86, installer 20 of 20, setup 6 of 6. The running DisplayWeave was left
+  untouched.
+- Not covered: staying tracked across ticks and the return to the whole monitor need a window
+  in another process, because the engine never inspects its own. There was no live run against
+  a real game, a browser's fullscreen or a video player, and the live hook fixtures were not
+  rerun (native code is unchanged).
+
 ## Security audit: signed releases, anonymous updates, diagnostic report, CI (0.5.10-preview, October 11, 2026)
 
 Changes on top of `3d08f42`, released as 0.5.10-preview; x64, Windows 11 25H2 build

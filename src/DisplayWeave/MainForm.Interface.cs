@@ -238,7 +238,7 @@ namespace DisplayWeave
             automaticRegions.Text = "Automatically use each app's current region";
             automaticRegions.Dock = DockStyle.Fill;
             auto.Controls.Add(automaticRegions, 0, 0);
-            auto.Controls.Add(Caption("Apps see the virtual regions. Move a window into a region, then maximize it or enter fullscreen."), 0, 1);
+            auto.Controls.Add(Caption("Move a window into a region, then maximize it or use borderless fullscreen. Nothing is loaded into apps."), 0, 1);
             body.Controls.Add(auto, 0, 1);
 
             var assign = Table(3, 6);
@@ -271,12 +271,13 @@ namespace DisplayWeave
             SetupCombo(ruleRegion); ruleRegion.AccessibleName = "App rule target region";
             assign.Controls.Add(ruleRegion, 0, 4);
             forceApp = Button("Force fullscreen", delegate { var item = windows.SelectedItem as WindowCandidate; if (item != null) Assign(item.Handle, ruleRegion.SelectedIndex); });
+            hints.SetToolTip(forceApp, "Loads DisplayWeave's component into the app, so its own fullscreen modes stay in the region too.\nAnti-cheat software can treat this as tampering: use it only for apps that allow it.");
             assign.Controls.Add(forceApp, 1, 4);
             ignoreApp = Button("Ignore this app", IgnoreSelected);
             assign.Controls.Add(ignoreApp, 2, 4);
             assign.Controls.Add(Caption("Saved rules take priority over automatic handling."), 0, 5);
             maximizeApp = Button("Maximize in region", delegate { var item = windows.SelectedItem as WindowCandidate; if (item != null) Assign(item.Handle, ruleRegion.SelectedIndex, ApplicationAction.MaximizeInRegion); });
-            hints.SetToolTip(maximizeApp, "Automatic handling already fits maximized windows of apps that refuse DisplayWeave's component.\nThis rule pins an app to one region and never tries to load the component into it:\nrun the app windowed and maximize it from its title bar.");
+            hints.SetToolTip(maximizeApp, "Pins an app to one region, wherever its window is. Nothing is loaded into the app:\nmaximize it or use its borderless fullscreen mode, and DisplayWeave fits it from outside.");
             assign.Controls.Add(maximizeApp, 1, 5);
             restoreApp = Button("Restore selected", RestoreSelected);
             assign.Controls.Add(restoreApp, 2, 5);

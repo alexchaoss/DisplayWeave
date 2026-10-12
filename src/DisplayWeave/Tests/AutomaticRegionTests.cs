@@ -129,7 +129,7 @@ namespace DisplayWeave
                 Assert(AutomaticRegionPolicy.Decide(true, false, true, ApplicationAction.MaximizeInRegion, true) == RegionControlMode.None, "Release lost to maximize.");
                 Assert(FullscreenController.KeepsMaximizedFit(RegionControlMode.Maximize, false), "Rule-fitted window was returned.");
                 Assert(FullscreenController.KeepsMaximizedFit(RegionControlMode.Automatic, true), "Automatic fallback window was returned while its component is unavailable.");
-                Assert(!FullscreenController.KeepsMaximizedFit(RegionControlMode.Automatic, false), "Fallback kept a window whose component may load again.");
+                Assert(FullscreenController.KeepsMaximizedFit(RegionControlMode.Automatic, false), "Automatic handling returned a window it fitted from outside.");
                 Assert(FullscreenController.KeepsMaximizedFit(RegionControlMode.Force, true), "Force rule without a component lost its fallback.");
                 Assert(!FullscreenController.KeepsMaximizedFit(RegionControlMode.None, true) && !FullscreenController.KeepsMaximizedFit(RegionControlMode.Force, false),
                     "Ignored, released or component-handled window stayed fitted from outside.");

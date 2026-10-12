@@ -108,7 +108,7 @@ namespace DisplayWeave
             {
                 // Nothing is attached; the next tick fits the window whenever it is maximized.
                 Engine.Readmit(identity);
-                return "Saved for " + Path.GetFileName(identity.ExecutablePath) + ": maximize it from its title bar and DisplayWeave fits it into " +
+                return "Saved for " + Path.GetFileName(identity.ExecutablePath) + ": maximize it or use its borderless fullscreen mode, and DisplayWeave fits it into " +
                     Layout.Zones[regionIndex].Name + ". Nothing is loaded into the app.";
             }
             Engine.Attach(identity, region, true, regions);

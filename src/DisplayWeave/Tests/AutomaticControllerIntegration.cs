@@ -13,6 +13,8 @@ namespace DisplayWeave
 {
     // Runs the production automatic discovery path against only the fixture
     // process this method launches. Never calls Attach or writes saved settings.
+    // The executable filter keeps automatic handling loading the component for this
+    // fixture; without a filter, automatic handling only fits windows from outside.
     public static class AutomaticControllerIntegration
     {
         public static int RunMonitor(string probePath, string reportPath)

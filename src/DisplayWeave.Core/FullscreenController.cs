@@ -228,7 +228,7 @@ namespace DisplayWeave
         private readonly HashSet<string> released = new HashSet<string>(StringComparer.Ordinal);
         private readonly AutomaticRegionPolicy automaticPolicy = new AutomaticRegionPolicy();
         private readonly FullscreenFailureHistory failureHistory = new FullscreenFailureHistory();
-        // Windows moved by MaximizeInRegion rules, pinned to their process identity for restoration.
+        // Windows fitted from outside, pinned to their process identity for restoration.
         private sealed class MaximizedFit
         {
             internal ApplicationIdentity Target;
@@ -266,8 +266,14 @@ namespace DisplayWeave
         public int FailureCount { get { return failureHistory.Count; } }
         // Windows handled from outside (Ready or fitted) in the latest tick; nothing is loaded into them.
         public int OutsideFitCount { get { return readyApps.Count; } }
-        // An app maximized or fullscreen in a region, or not yet reporting its state; restarting DisplayWeave would resize it.
-        public bool HasExpandedApp { get { if (maximized.Count > 0) return true; foreach (Session s in sessions.Values) if (s.Enabled && s.NativeExpanded != false) return true; return false; } }
+        // A hooked app maximized or fullscreen in its region, or not yet reporting its state: restarting DisplayWeave
+        // would resize it. Windows fitted from outside do not count; an update leaves them for the next version.
+        public bool HasExpandedApp { get { foreach (Session s in sessions.Values) if (s.Enabled && s.NativeExpanded != false) return true; return false; } }
+
+        // Before an update: forget the windows fitted from outside instead of returning them to their whole monitor.
+        // The next version adopts the maximized ones where they are, so they do not flash across the display; a borderless
+        // fullscreen window stays in its region and is taken over when it next enters fullscreen.
+        public void LeaveFittedWindows() { maximized.Clear(); }
         // Test scope only: automatic preparation is limited to this exact executable path when set.
         public string AutomaticExecutableFilter { get; set; }
 
@@ -661,8 +667,10 @@ namespace DisplayWeave
                     string zoneId;
                     if (!automaticPolicy.Observe(identity.Key, currentBounds, restoredBounds, expanded, false,
                         area, layout.Zones, out zoneId, out region)) { Disable(existing); continue; }
-                    // No component (refused, elevated, timed out, or a Chromium window): fit the maximized window from outside instead.
-                    if (existing == null && OutsideFitOnly(identity)) { FitFromOutside(identity, region); continue; }
+                    // Automatic handling never loads the component: it fits maximized and borderless fullscreen windows from
+                    // outside. Only the live hook fixtures, scoped to one executable, still load it automatically.
+                    if (String.IsNullOrWhiteSpace(AutomaticExecutableFilter) || (existing == null && OutsideFitOnly(identity)))
+                    { Disable(existing); FitFromOutside(identity, region); continue; }
                     if (existing != null) AttachCore(identity, region, false, true, layoutRegions, zoneId);
                     else if (!failed.Contains(identity.Key) && DateTime.UtcNow >= nextAutomaticLaunch)
                     {
@@ -694,8 +702,10 @@ namespace DisplayWeave
             MaximizedFit fit;
             maximized.TryGetValue(handle, out fit);
             if (fit != null && fit.Target.Key != target.Key) { maximized.Remove(handle); fit = null; }
+            Rectangle current, wanted, frame;
+            if (!TryMaximizedBounds(handle, region, out current, out wanted, out frame)) return;
             // A restored window is back where Windows keeps its normal position; nothing to undo.
-            if (IsIconic(handle) || !IsZoomed(handle))
+            if (IsIconic(handle) || !(IsZoomed(handle) || BorderlessFullscreen(handle, frame, fit)))
             {
                 if (fit == null || IsIconic(handle)) return;
                 maximized.Remove(handle);
@@ -706,11 +716,12 @@ namespace DisplayWeave
                 }
                 return;
             }
-            Rectangle current, wanted;
-            if (!TryMaximizedBounds(handle, region, out current, out wanted)) return;
             if (current == wanted)
             {
-                if (fit != null && fit.Attempts != 0) { fit.Attempts = 0; failureHistory.ClearTarget(target); }
+                // Already in its region, as the previous version leaves it during an update: adopt it, so exiting returns it.
+                if (fit == null) maximized.Add(handle, new MaximizedFit { Target = target, Region = region,
+                    Reason = OutsideOnlyReason(target.WindowClass) ?? failureHistory.For(target) });
+                else if (fit.Attempts != 0) { fit.Attempts = 0; failureHistory.ClearTarget(target); }
                 return;
             }
             if (fit == null) maximized.Add(handle, fit = new MaximizedFit { Target = target,
@@ -720,7 +731,7 @@ namespace DisplayWeave
             fit.LastAttempt = DateTime.UtcNow;
             if (++fit.Attempts == MaximumFitAttempts)
             {
-                RecordFailure(target, Path.GetFileName(target.ExecutablePath) + " keeps changing its maximized size, so DisplayWeave stopped fitting it. Restore and maximize it again to retry.");
+                RecordFailure(target, Path.GetFileName(target.ExecutablePath) + " keeps changing its size, so DisplayWeave stopped fitting it. Restore and maximize it, or leave and reenter fullscreen, to retry.");
                 return;
             }
             if (!SetWindowPos(handle, IntPtr.Zero, wanted.X, wanted.Y, wanted.Width, wanted.Height, FitFlags))
@@ -730,7 +741,7 @@ namespace DisplayWeave
                     Marshal.GetLastWin32Error().ToString(CultureInfo.InvariantCulture) + "). An app running as administrator needs DisplayWeave restarted as administrator.");
                 return;
             }
-            LastMessage = "Fitted the maximized " + Path.GetFileName(target.ExecutablePath) + " window into its region. Nothing is loaded into the app.";
+            LastMessage = "Fitted the " + Path.GetFileName(target.ExecutablePath) + " window into its region. Nothing is loaded into the app.";
         }
 
         private void FitFromOutside(ApplicationIdentity target, Rectangle region)
@@ -753,12 +764,12 @@ namespace DisplayWeave
             return null;
         }
 
-        // A fitted window stays in its region under a MaximizeInRegion rule, or under
-        // automatic or Force handling while its component is unavailable.
+        // A fitted window stays in its region under a MaximizeInRegion rule or automatic handling,
+        // or under a Force rule while its component is unavailable.
         internal static bool KeepsMaximizedFit(RegionControlMode mode, bool componentFailed)
         {
-            return mode == RegionControlMode.Maximize ||
-                ((mode == RegionControlMode.Automatic || mode == RegionControlMode.Force) && componentFailed);
+            return mode == RegionControlMode.Maximize || mode == RegionControlMode.Automatic ||
+                (mode == RegionControlMode.Force && componentFailed);
         }
 
         // Windows no longer fitted by a rule or the automatic fallback go back to filling their monitor.
@@ -778,7 +789,7 @@ namespace DisplayWeave
                         RegionControlMode mode = AutomaticRegionPolicy.Decide(layout.AutomaticRegions, false, released.Contains(current.ProcessKey),
                             rule == null ? (ApplicationAction?)null : rule.Action, resolved);
                         if (KeepsMaximizedFit(mode, OutsideFitOnly(current))) continue;
-                        ReturnToMonitor(fit.Target.Handle);
+                        ReturnToMonitor(fit);
                     }
                 }
                 catch (Exception ex) { Quarantine(fit.Target, ex); } // the other fitted windows are still checked
@@ -792,29 +803,44 @@ namespace DisplayWeave
             {
                 ApplicationIdentity current;
                 string error;
-                if (TryInspect(fit.Target.Handle, out current, out error) && current.Key == fit.Target.Key) ReturnToMonitor(fit.Target.Handle);
+                if (TryInspect(fit.Target.Handle, out current, out error) && current.Key == fit.Target.Key) ReturnToMonitor(fit);
             }
             maximized.Clear();
         }
 
-        private static void ReturnToMonitor(IntPtr handle)
+        private static void ReturnToMonitor(MaximizedFit fit)
         {
-            Rectangle current, wanted;
+            IntPtr handle = fit.Target.Handle;
+            Rectangle current, wanted, frame;
             DisplayMonitor monitor = DisplayMonitor.FromWindow(handle);
-            if (monitor == null || IsIconic(handle) || !IsZoomed(handle) ||
-                !TryMaximizedBounds(handle, monitor.WorkingArea, out current, out wanted) || current == wanted) return;
+            bool zoomed = IsZoomed(handle);
+            // A borderless fullscreen window goes back to covering its whole monitor, taskbar included.
+            if (monitor == null || IsIconic(handle) || !TryMaximizedBounds(handle, zoomed ? monitor.WorkingArea : monitor.Bounds,
+                out current, out wanted, out frame) || current == wanted || !(zoomed || BorderlessFullscreen(handle, frame, fit))) return;
             SetWindowPos(handle, IntPtr.Zero, wanted.X, wanted.Y, wanted.Width, wanted.Height, FitFlags);
         }
 
-        private static bool TryMaximizedBounds(IntPtr handle, Rectangle target, out Rectangle current, out Rectangle wanted)
+        private static bool TryMaximizedBounds(IntPtr handle, Rectangle target, out Rectangle current, out Rectangle wanted, out Rectangle visible)
         {
-            current = wanted = Rectangle.Empty;
+            current = wanted = visible = Rectangle.Empty;
             NativeRect window, frame;
             if (!GetWindowRect(handle, out window)) return false;
             if (DwmGetWindowAttribute(handle, 9, out frame, Marshal.SizeOf(typeof(NativeRect))) != 0) frame = window; // DWMWA_EXTENDED_FRAME_BOUNDS
             current = Rectangle.FromLTRB(window.Left, window.Top, window.Right, window.Bottom);
-            wanted = MaximizedBounds(current, Rectangle.FromLTRB(frame.Left, frame.Top, frame.Right, frame.Bottom), target);
+            visible = Rectangle.FromLTRB(frame.Left, frame.Top, frame.Right, frame.Bottom);
+            wanted = MaximizedBounds(current, visible, target);
             return true;
+        }
+
+        // A window without a title bar covering its monitor is in borderless (windowed) fullscreen; once fitted, it covers
+        // its region instead. Topmost, click-through and never-activated windows are overlays or capture tools: left alone.
+        private static bool BorderlessFullscreen(IntPtr handle, Rectangle frame, MaximizedFit fit)
+        {
+            long style = IntPtr.Size == 8 ? GetWindowLongPtr(handle, -16).ToInt64() : GetWindowLong(handle, -16);
+            long extended = IntPtr.Size == 8 ? GetWindowLongPtr(handle, -20).ToInt64() : GetWindowLong(handle, -20);
+            DisplayMonitor monitor = DisplayMonitor.FromWindow(handle);
+            return (style & 0x00C00000L) == 0 && (extended & 0x08000028L) == 0 && monitor != null && // WS_CAPTION; WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_TOPMOST
+                (NearlyCovers(frame, monitor.Bounds) || (fit != null && NearlyEquals(frame, fit.Region)));
         }
 
         // Keep the window's own invisible-border overhang, as Windows does when maximizing,
