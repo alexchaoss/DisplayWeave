@@ -57,12 +57,25 @@ Results:
   text unselected.
 - `tests/installer-tests.ps1` in Windows PowerShell 5.1: 20 passed. PowerShell 7 is not
   installed here.
-- With the key pinned, `.\scriptselease.ps1` (no publish) at 0.5.10-preview: managed and
+- With the key pinned, `.\scripts
+elease.ps1` (no publish) at 0.5.10-preview: managed and
   native checks passed, installer tests 20, setup tests 6. Local ZIP SHA-256 `2b96209f…`,
   setup `80aa0884…`; the published files are CI's rebuild, not these.
+- CI run 38190736746 on `496d9ab`: both builds passed on `windows-2022` and `windows-2025`
+  (managed 112 including the pinned-key check, native policy and IPC on x64 and x86, installer
+  tests in PowerShell 7 and Windows PowerShell 5.1, setup tests). The release job attested the
+  ZIP and setup and created draft `v0.5.10-preview`.
+- `.\scripts\sign-release.ps1 -Version 0.5.10-preview` checked the attestations, signed both
+  checksums and published the release. It is immutable, its tag points at `496d9ab`, and it has
+  six assets including both `.sha256.sig` files. `gh attestation verify` on a fresh download:
+  `build.yml@refs/heads/main`, commit `496d9ab`, GitHub-hosted runner.
+- End to end against the published release (scratch `TEMP` and install root): the 0.5.10
+  updater, from a `csc`-built host, went from `0.5.6-preview` to `0.5.10-preview` and
+  accepted the signed setup; `install.ps1` without `-Version` verified the signature and
+  installed 0.5.10 into a scratch root, with a receipt equal to GitHub's ZIP digest
+  (`45864501…`).
 - Not run: the full app with the new button (the installed DisplayWeave holds the
-  single-instance lock), the in-app update hand-off, `sign-release.ps1`'s draft download,
-  `gh attestation verify` and publish steps, and CI itself (matrix, 5.1 leg, attestation).
+  single-instance lock) and the in-app update hand-off (idle wait, quiet setup, relaunch).
   Native code and the setup are unchanged and were not rebuilt.
 
 ## Version 0.5.2 Maximize in region
