@@ -42,7 +42,7 @@ namespace DisplayWeave
                 LayoutSettings layout = new LayoutSettings { MonitorDevice = selected.DeviceName, UseWorkArea = false,
                     AutomaticRegions = true, Zones = LayoutSettings.Preset(1) };
                 List<Rectangle> regions;
-                if (!FullscreenController.TryResolveLayoutInArea(layout.Zones, selected.Bounds, out regions))
+                if (!RegionGeometry.TryResolveLayoutInArea(layout.Zones, selected.Bounds, out regions))
                     throw new InvalidOperationException("The monitor cannot contain three fixture regions.");
                 ApplicationRules emptyRules = new ApplicationRules();
                 controller = new FullscreenController { AutomaticExecutableFilter = fixture };
@@ -59,7 +59,7 @@ namespace DisplayWeave
                 long fixtureCreation = probe.StartTime.ToUniversalTime().ToFileTimeUtc();
                 log.AppendLine("Launched fixture PID: " + fixturePid.ToString(CultureInfo.InvariantCulture));
                 string encoded;
-                FullscreenController.TrySerializeRegions(regions, regions[1], out encoded);
+                HelperProtocol.TrySerializeRegions(regions, regions[1], out encoded);
                 log.AppendLine("Complete three-column layout: " + encoded);
                 IntPtr fixtureWindow = IntPtr.Zero;
                 int phase = 0, pendingPhase = 0, discoveryTicks = 0;

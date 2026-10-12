@@ -52,7 +52,7 @@ namespace DisplayWeave
             if (expanded && !String.IsNullOrEmpty(observation.ZoneId))
             {
                 // A split/deleted target does not silently remap an already fullscreen application.
-                if (!FullscreenController.TryResolveRegionInArea(observation.ZoneId, zones, area, out region)) return false;
+                if (!RegionGeometry.TryResolveRegionInArea(observation.ZoneId, zones, area, out region)) return false;
                 zoneId = observation.ZoneId;
                 return true;
             }
@@ -83,7 +83,7 @@ namespace DisplayWeave
             region = Rectangle.Empty;
             if (!Positive(bounds) || !Positive(area) || zones == null || zones.Count == 0 || !Intersects(bounds, area)) return false;
             Rectangle ignored;
-            if (!FullscreenController.TryResolveRegionInArea(zones[0] == null ? null : zones[0].Id, zones, area, out ignored)) return false;
+            if (!RegionGeometry.TryResolveRegionInArea(zones[0] == null ? null : zones[0].Id, zones, area, out ignored)) return false;
             double centerX = bounds.X + bounds.Width / 2.0;
             double centerY = bounds.Y + bounds.Height / 2.0;
             long bestOverlap = -1;

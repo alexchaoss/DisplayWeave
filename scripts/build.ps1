@@ -13,7 +13,8 @@ $coreSources = @(Get-ChildItem -LiteralPath (Join-Path $projectDirectory 'src\Di
 $core = Join-Path $outputDirectory 'DisplayWeave.Core.dll'
 & $compiler /noconfig /nologo /target:library /platform:x64 /optimize+ /warn:4 /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Xml.dll "/out:$core" $coreSources
 if ($LASTEXITCODE -ne 0) { throw 'Core build failed.' }
-$sources = @('Program.cs', 'AppOptions.cs', 'ElevationRestart.cs', 'StartupRegistration.cs', 'Updater.cs', 'DiagnosticReport.cs', 'MainForm.cs', 'MainForm.Interface.cs', 'RulerCanvas.cs', 'Tests\LifecycleTests.cs', 'Tests\LayoutTests.cs', 'Tests\RuleTests.cs', 'Tests\AutomaticRegionTests.cs', 'Tests\AutomaticControllerIntegration.cs') | ForEach-Object { Join-Path $sourceDirectory $_ }
+# Every source in the app folder and its Tests folder, as for the engine, so a new partial file cannot be left out.
+$sources = @(@($sourceDirectory, (Join-Path $sourceDirectory 'Tests')) | ForEach-Object { Get-ChildItem -LiteralPath $_ -Filter '*.cs' } | ForEach-Object { $_.FullName })
 & $compiler /nologo /target:winexe /platform:x64 /optimize+ /warn:4 "/reference:$core" /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Xml.dll "/win32manifest:$sourceDirectory\app.manifest" "/win32icon:$sourceDirectory\app.ico" "/resource:$sourceDirectory\version.txt,DisplayWeave.version.txt" "/out:$outputDirectory\DisplayWeave.exe" $sources
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
 Write-Output "Built $outputDirectory\DisplayWeave.exe and DisplayWeave.Core.dll"

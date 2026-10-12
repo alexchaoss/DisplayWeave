@@ -312,7 +312,7 @@ controls it, but restart the app if it still crashes.
 
 Version 0.4.3 excludes one game launcher from region hooks because crashes have been
 reported while it is hooked; `LauncherProcessProtection` in
-`src/DisplayWeave.Core/FullscreenController.cs` lists its executable names. The
+`src/DisplayWeave.Core/ProcessProtection.cs` lists its executable names. The
 exclusion applies to automatic handling, manual Force rules, saved rules, and direct
 native-helper requests. It matches complete executable names, not folders or parent
 processes, so games started by the launcher remain eligible for region handling.

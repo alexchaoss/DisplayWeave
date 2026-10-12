@@ -4,6 +4,34 @@ Commands recorded below before October 10, 2026 use the old root-level script pa
 
 The virtual-display projection prototype and its evidence moved to the `prototype` branch on October 11, 2026. Entries below that mention prototype or projection checks record what was run at the time.
 
+## Source split into files under 500 lines (after 0.5.12-preview, October 12, 2026)
+
+Changes on top of `7131b7d`; x64, same computer. No behavior change intended.
+
+- `FullscreenController.cs` (1,528 lines) became a partial class in four files (state and `Tick`,
+  outside fits, helper sessions, window inspection and Win32 declarations) plus separate classes
+  for the parts without controller state: `HelperSession`, `HelperProtocol`, `FailureMessages`,
+  `FullscreenFailureHistory`, `RegionGeometry`, the process protections, `ApplicationIdentity` and
+  `HandledApp`. `Tick` calls `TickSessions` and `TickWindows`. Callers of the moved static members
+  (`RegionGeometry.TryResolveRegion`, `FailureMessages.FormatFailure` and others) were updated.
+  The window-style reads use one helper and named constants instead of repeated inline reads and
+  raw numbers. The largest Core file is now 415 lines (`Layout.cs`).
+- The app: `MainForm` became one partial file per feature (main, interface, layout, rules, rule
+  options, status, updates), `RulerCanvas` a drawing and an input file, and `RuleTests.Run` six
+  group methods in their own files, called in the old order so the report lists the tests as
+  before. `scripts/build.ps1` now compiles every `.cs` file in `src/DisplayWeave` and `Tests`
+  instead of a fixed list. The largest app source is now 340 lines (`MainForm.Rules.cs`).
+  `LayoutTests.cs` (485), `AutomaticControllerIntegration.cs` (465) and the native sources were
+  not split.
+- The splits were made by scripts that assign every member (or test) of the old file to one new
+  file and stop if any is left over; the bodies are unchanged apart from the renames above.
+
+Results:
+
+- `.\scripts\release.ps1` (no `-Publish`): layout 20, rules 54, automatic 14, lifecycle 33 (121 passed,
+  0 failed), native policy and IPC on x64 and x86, installer 20 of 20, setup 6 of 6.
+- Not covered: live handling of a real app with this build.
+
 ## App rules redesign, Borderless in region and Centered fullscreen (0.5.12-preview, October 12, 2026)
 
 Changes on top of `deff6da`; x64, same computer and display as below.

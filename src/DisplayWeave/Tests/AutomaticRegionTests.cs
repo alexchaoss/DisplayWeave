@@ -150,9 +150,9 @@ namespace DisplayWeave
                 // A maximized window on a 7680x2100 work area, with 8 px invisible borders.
                 Rectangle window = Rectangle.FromLTRB(-8, -8, 7688, 2108), frame = new Rectangle(0, 0, 7680, 2100);
                 Rectangle region = new Rectangle(1900, 0, 3900, 2100);
-                Assert(FullscreenController.MaximizedBounds(window, frame, region) == Rectangle.FromLTRB(1892, -8, 5808, 2108), "Visible frame does not land on the region.");
-                Assert(FullscreenController.MaximizedBounds(window, window, region) == region, "Borderless window was not placed on the region exactly.");
-                Assert(FullscreenController.MaximizedBounds(Rectangle.FromLTRB(1892, -8, 5808, 2108), region, frame) == window, "Return to the monitor does not reproduce Windows' maximized bounds.");
+                Assert(RegionGeometry.MaximizedBounds(window, frame, region) == Rectangle.FromLTRB(1892, -8, 5808, 2108), "Visible frame does not land on the region.");
+                Assert(RegionGeometry.MaximizedBounds(window, window, region) == region, "Borderless window was not placed on the region exactly.");
+                Assert(RegionGeometry.MaximizedBounds(Rectangle.FromLTRB(1892, -8, 5808, 2108), region, frame) == window, "Return to the monitor does not reproduce Windows' maximized bounds.");
             });
 
             test("Malformed or pixel-collapsed layouts never get automatic targets", delegate

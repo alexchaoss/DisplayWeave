@@ -103,8 +103,8 @@ namespace DisplayWeave
             Rectangle region;
             List<Rectangle> regions;
             // Saving normalizes the layout, so the region is resolved afterwards.
-            if (!FullscreenController.TryResolveRegion(rule, Layout, out region) ||
-                !FullscreenController.TryResolveLayout(Layout, out regions))
+            if (!RegionGeometry.TryResolveRegion(rule, Layout, out region) ||
+                !RegionGeometry.TryResolveLayout(Layout, out regions))
                 return "The region changed while saving. Review the layout and assign the application again.";
             string name = Path.GetFileName(identity.ExecutablePath);
             if (action == ApplicationAction.MaximizeInRegion)
