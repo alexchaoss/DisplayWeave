@@ -74,10 +74,12 @@ namespace DisplayWeave
             timer.Tick += delegate { TickNow(); };
             timer.Start();
             // A window fitted from outside first fills the display; fit it as soon as it maximizes, not on the next tick.
-            maximizeWatcher = new MaximizeWatcher(TickNow, delegate
+            maximizeWatcher = new MaximizeWatcher(TickNow, delegate(IntPtr window)
             {
                 fastTicksUntil = DateTime.UtcNow.AddSeconds(2);
                 if (timer.Interval != 250) timer.Interval = 250;
+                // A fullscreen Chromium window spreads over the whole display on each click or focus change.
+                if (fullscreen.RefitsAtOnce(window)) TickNow();
             });
             // Administrator mode never updates: the setup would run elevated from a user-writable folder.
             if (installRoot != null && String.IsNullOrWhiteSpace(automaticExecutableFilter) && !ElevationRestart.IsElevated())

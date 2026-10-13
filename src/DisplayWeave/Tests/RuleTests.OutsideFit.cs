@@ -165,6 +165,38 @@ namespace DisplayWeave
                 }
             });
 
+            test("A fullscreen Chromium window that spreads over its monitor again is refitted at once, every time", delegate
+            {
+                DisplayMonitor primary = DisplayMonitor.FromRectangle(new Rectangle(0, 0, 1, 1));
+                LayoutSettings layout = new LayoutSettings { MonitorDevice = primary.DeviceName };
+                Rectangle region = layout.Zones[0].ToPixels(layout.UseWorkArea ? primary.WorkingArea : primary.Bounds);
+                foreach (string windowClass in new[] { "Chrome_WidgetWin_1", "GameWindow" })
+                {
+                    bool chromium = windowClass == "Chrome_WidgetWin_1";
+                    // Never shown: a borderless window covering the monitor, as Chromium's fullscreen window is.
+                    using (System.Windows.Forms.Form window = new System.Windows.Forms.Form { FormBorderStyle = System.Windows.Forms.FormBorderStyle.None,
+                        StartPosition = System.Windows.Forms.FormStartPosition.Manual, Bounds = primary.Bounds })
+                    using (FullscreenController controller = new FullscreenController())
+                    {
+                        controller.ShiftHeld = delegate { return false; };
+                        ApplicationIdentity app = new ApplicationIdentity { ExecutablePath = @"C:\Apps\App.exe", WindowClass = windowClass,
+                            ProcessId = (uint)System.Diagnostics.Process.GetCurrentProcess().Id, CreationTime = 1, Handle = window.Handle };
+                        for (int round = 0; round < 3; round++)
+                        {
+                            // As Chromium does on a click or a change of focus: back over the whole monitor.
+                            window.Bounds = primary.Bounds;
+                            controller.FitMaximized(app, region);
+                            System.Windows.Forms.Application.DoEvents();
+                            Assert((WindowBounds(window.Handle) == region) == (chromium || round == 0), windowClass + " round " + round +
+                                ": " + WindowBounds(window.Handle) + " (a game waits before it is moved again; Chromium does not).");
+                            controller.FitMaximized(app, region); // the next tick sees where it is
+                        }
+                        Assert(controller.RefitsAtOnce(window.Handle) == chromium, windowClass + ": wrong immediate refit.");
+                        Assert(controller.TakeSuggestion() == null, windowClass + ": a Borderless in region rule was offered.");
+                    }
+                }
+            });
+
             test("Saved rules keep the borderless and centered actions", delegate
             {
                 string path = Path.Combine(Path.GetTempPath(), "DisplayWeave-rules-" + Guid.NewGuid().ToString("N") + ".xml");

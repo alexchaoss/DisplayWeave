@@ -11,12 +11,13 @@ namespace DisplayWeave
     {
         private const uint EventObjectLocationChange = 0x800B, WinEventOutOfContext = 0x0000, WinEventSkipOwnProcess = 0x0002;
         private readonly HashSet<IntPtr> zoomed = new HashSet<IntPtr>();
-        private readonly Action maximized, moved;
+        private readonly Action maximized;
+        private readonly Action<IntPtr> moved;
         // Kept in a field so the delegate outlives the native hook.
         private readonly WinEventProc callback;
         private IntPtr hook;
 
-        public MaximizeWatcher(Action maximized, Action moved = null)
+        public MaximizeWatcher(Action maximized, Action<IntPtr> moved = null)
         {
             this.maximized = maximized;
             this.moved = moved;
@@ -29,7 +30,7 @@ namespace DisplayWeave
         {
             // OBJID_WINDOW of the window itself; carets, cursors and child objects move constantly.
             if (objectId != 0 || childId != 0 || window == IntPtr.Zero) return;
-            if (moved != null && GetAncestor(window, 2) == window) moved(); // GA_ROOT: a top-level window
+            if (moved != null && GetAncestor(window, 2) == window) moved(window); // GA_ROOT: a top-level window
             if (BecameMaximized(window, IsZoomed(window))) maximized();
         }
 

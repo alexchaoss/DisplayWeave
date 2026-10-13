@@ -54,7 +54,16 @@ namespace DisplayWeave
             foreach (IntPtr handle in new List<IntPtr>(maximized.Keys)) if (!maximized[handle].Styled) maximized.Remove(handle);
         }
 
-        private void FitMaximized(ApplicationIdentity target, Rectangle region)
+        // Chromium puts its fullscreen window back over the whole monitor whenever it is clicked, restacked or loses or
+        // regains focus (its taskbar workaround). That is expected, so such a window is refitted as soon as it moves.
+        public bool RefitsAtOnce(IntPtr handle)
+        {
+            MaximizedFit fit;
+            return maximized.TryGetValue(handle, out fit) && !fit.Styled && fit.Attempts < MaximumFitAttempts &&
+                ChromiumWindowProtection.IsChromiumWindow(fit.Target.WindowClass);
+        }
+
+        internal void FitMaximized(ApplicationIdentity target, Rectangle region)
         {
             IntPtr handle = target.Handle;
             MaximizedFit fit;
@@ -93,17 +102,21 @@ namespace DisplayWeave
             if (fit == null) maximized.Add(handle, fit = new MaximizedFit { Target = target,
                 Reason = OutsideOnlyReason(target.WindowClass) ?? failureHistory.For(target) });
             fit.Region = region;
-            if (fit.Attempts >= MaximumFitAttempts || DateTime.UtcNow - fit.LastAttempt < FitRetryDelay) return;
+            // Chromium's resizing back is not a swap chain being rebuilt: no wait, and only a fight that never lets it
+            // settle in its region (four moves without one tick seeing it fitted) stops the fit.
+            bool chromium = ChromiumWindowProtection.IsChromiumWindow(target.WindowClass);
+            if (fit.Attempts >= MaximumFitAttempts || (!chromium && DateTime.UtcNow - fit.LastAttempt < FitRetryDelay)) return;
             fit.LastAttempt = DateTime.UtcNow;
             // A borderless game that resizes itself back once always will: each further move only risks crashing
             // an overlay that hooks its graphics.
             bool zoomed = IsZoomed(handle);
-            if (++fit.Attempts >= (zoomed ? MaximumFitAttempts : 2))
+            if (++fit.Attempts >= (zoomed || chromium ? MaximumFitAttempts : 2))
             {
                 fit.Attempts = MaximumFitAttempts;
                 RecordFailure(target, zoomed ? "It keeps changing its maximized size, so DisplayWeave stopped fitting it. Restore and maximize it again to retry"
+                    : chromium ? "It keeps resizing itself to fill its monitor, so DisplayWeave stopped fitting it. Leave fullscreen and enter it again to retry"
                     : "It resized itself back to fill its monitor, so DisplayWeave stopped moving it. Set it to Windowed and give it a Borderless in region rule on App rules", true);
-                if (!zoomed) suggestion = new HandledApp { Target = target, Region = region, State = HandledAppState.Error };
+                if (!zoomed && !chromium) suggestion = new HandledApp { Target = target, Region = region, State = HandledAppState.Error };
                 return;
             }
             if (!SetWindowPos(handle, IntPtr.Zero, wanted.X, wanted.Y, wanted.Width, wanted.Height, FitFlags))
