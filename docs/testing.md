@@ -35,6 +35,10 @@ Whether the engines still flag it is checked on VirusTotal after the release.
   scripts, and CI published v1.0.3 as the latest release. Downloaded to an empty folder and not run: both checksums
   match and their `.sig` files verify with the Key Vault key; the nine binaries and both `.ps1` files in the ZIP are
   validly signed and timestamped by `CN=Alexandre St-Pierre`; the embedded helper hashes match the signed helpers.
+- First automatic update to a release signed with the Key Vault key: the user went back to the installed 1.0.2, which
+  restarted at 11:13:39. Its first check failed on DNS (`api.github.com` not resolved); the retry five minutes later
+  downloaded the 1.0.3 setup with its `.sha256` and `.sig` (the setup's hash matches the published checksum), closed
+  at 11:19:43 and started 1.0.3 at 11:19:44 from `versions\1.0.3`, with startup preserved.
 
 ## Faster update checks and the first automated release (1.0.2, October 13, 2026)
 
