@@ -1,6 +1,6 @@
 # DisplayWeave
 
-Windows virtual-monitor compatibility preview with automatic region detection, custom
+Windows virtual-monitor compatibility app with automatic region detection, custom
 screen regions, and optional per-application rules.
 
 For development or AI-agent continuation, start with [AGENTS.md](AGENTS.md) and the
@@ -20,9 +20,12 @@ sign in**, and adds DisplayWeave to **Settings → Apps → Installed apps**. A 
 DisplayWeave is closed and reopened. The setup verifies its embedded package's
 SHA-256 checksum before installing.
 
-The setup is not code-signed, so Windows SmartScreen may show "Windows protected
-your PC". Choose **More info → Run anyway** only for a file from this releases page;
-its SHA-256 is in the matching `.exe.sha256` file.
+From 1.0.0, the setup, the app and its native helpers are code-signed by Alexandre
+St-Pierre (Microsoft Artifact Signing); earlier releases are not. Windows SmartScreen
+may still show "Windows protected your PC" while the publisher builds reputation.
+Choose **More info → Run anyway** only when it names Alexandre St-Pierre as the
+publisher and the file is from this releases page; its SHA-256 is in the matching
+`.exe.sha256` file.
 
 To uninstall, use **Settings → Apps → Installed apps → DisplayWeave → Uninstall**.
 It closes DisplayWeave and removes its program files, Start menu shortcut and startup
@@ -473,7 +476,7 @@ a separate folder, and copy `layout.xml` and `rules.xml` there. The installer is
 recommended for subsequent updates because it keeps settings separate from
 version files. Release archives contain no personal settings.
 
-## Scope of this preview
+## Scope
 
 - Consistent virtual-monitor geometry for 32-bit and 64-bit Win32 applications.
 - Automatic maximize and borderless fullscreen handling from outside the app, with

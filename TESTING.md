@@ -4,6 +4,24 @@ Commands recorded below before October 10, 2026 use the old root-level script pa
 
 The virtual-display projection prototype and its evidence moved to the `prototype` branch on October 11, 2026. Entries below that mention prototype or projection checks record what was run at the time.
 
+## Code signing (1.0.0, October 13, 2026)
+
+1.0.0 is 0.6.0 plus Authenticode signing of the release build in CI (`67b5e37`); the app's code is unchanged.
+
+- Azure Artifact Signing account `displayweave` (East US, Basic) with the Public Trust certificate profile
+  `displayweave-public` (`CN=Alexandre St-Pierre, O=Alexandre St-Pierre, L=Drummondville, S=qc, C=CA`); individual
+  identity validation completed October 13. CI signs in through the GitHub `release` environment (branch `main`
+  only, the maintainer as required reviewer) with an OIDC federated credential for that environment; the identity
+  holds only the Certificate Profile Signer role on that profile.
+- CI run 38396879055 on `67b5e37`, while 0.6.0 was already released: the `version` job, both Windows builds and
+  the release job passed; all five signing steps were skipped and no deployment was made, so ordinary builds never
+  wait for approval.
+- The 1.0.0 release build's **Check the signatures** step fails the build unless every `.exe` and `.dll` in `dist`
+  (native helpers, app, engine) and the setup has a valid signature; that run is recorded in the GitHub Actions
+  history, not here, because this file ships inside it.
+- Not tested: SmartScreen's reaction to the new publisher, and administrator mode with signed helpers on this
+  computer.
+
 ## Shortcuts, profiles, recovery and update safety (0.6.0, October 12, 2026)
 
 Changes on top of `e5e05cf`; x64, same computer. The checks below ran with `version.txt` still at
