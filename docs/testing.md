@@ -46,8 +46,15 @@ Results:
 - Uninstaller signing, locally, with a throwaway self-signed certificate in place of Azure (deleted afterwards). Compiled
   with `/DSign` and a stand-in sign tool shaped like the CI command, ISCC ran the tool on `uninst.e32.tmp` and then on the
   setup. A test-mode install wrote `unins000.exe` signed with that certificate, beside a separate `unins000.msg`, and the
-  uninstall left only `data`. Not run locally: `sign-file.ps1` itself, which needs `pwsh`, the module and the Azure
-  sign-in. CI checks the setup's signature, and after the setup tests it checks the installed `unins000.exe`.
+  uninstall left only `data`.
+- `build-setup.ps1 -Sign` under PowerShell 7.6.6, with a logging stand-in for the `ArtifactSigning` module that signed
+  with an untrusted throwaway certificate. ISCC ran `sign-file.ps1` on `uninst.e32.tmp`, which called the stand-in with
+  all 17 settings. `sign-file.ps1` refused the untrusted signature, and after Inno's two retries the build failed with no
+  setup produced. Without any module, the build also failed at that step.
+- Every setting `sign-file.ps1` passes is a parameter of the real module 0.1.8 (read from its source, not run).
+  The module sends `.tmp` files to signtool, which detects the PE format from the contents.
+- Signing with the real certificate happens only in CI's release build: no Azure CLI sign-in exists locally. CI checks
+  the setup's signature, and after the setup tests it checks the installed `unins000.exe`.
 - Incident during development: a non-test-mode setup run removed the user's HKCU Run value, which was restored in its
   1.0.3 form. The tests now pass `/testmode=1`, and the uninstaller only removes a value that starts its own install.
 
