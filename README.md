@@ -22,7 +22,7 @@ SHA-256 is published in the matching `.exe.sha256` file.
 
 From 1.0.5, the setup starts nothing through PowerShell: a signed launcher program
 opens DisplayWeave from the Start menu and at sign-in. From 1.0.0, the setup, the app,
-its native helpers and its launcher are code-signed by Alexandre St-Pierre (Microsoft
+its native helpers and its launcher (from 1.0.5 also its uninstaller) are code-signed by Alexandre St-Pierre (Microsoft
 Artifact Signing); earlier releases are not. Windows SmartScreen may still show
 "Windows protected your PC" while the publisher builds reputation.
 Choose **More info → Run anyway** only when it names Alexandre St-Pierre as the

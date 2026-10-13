@@ -1,6 +1,7 @@
 # Builds release\DisplayWeave-Setup-<version>.exe with Inno Setup from the portable package made by
-# package.ps1 (run package.ps1 first). The payload is baked into the setup; the result is unsigned.
-param([string]$PackagePath)
+# package.ps1 (run package.ps1 first). The payload is baked into the setup. The result is unsigned, except
+# with -Sign (CI release builds): ISCC then signs the setup and its uninstaller through sign-file.ps1.
+param([string]$PackagePath, [switch]$Sign)
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
 $version = (Get-Content -LiteralPath (Join-Path $repository 'src\DisplayWeave\version.txt') -Raw).Trim()
@@ -28,7 +29,9 @@ $payloadDirectory = Join-Path ([IO.Path]::GetTempPath()) ('DisplayWeave-setup-' 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 try {
     [IO.Compression.ZipFile]::ExtractToDirectory($PackagePath, $payloadDirectory)
-    & $iscc /Qp "/DAppVersion=$version" "/DPayloadDir=$payloadDirectory" "/DOutputDir=$outputDirectory" $script
+    # $q and $f are ISCC's quote and quoted file name, so no quotes need to survive PowerShell's argument passing.
+    $signing = if ($Sign) { @(('/Sartifactsigning=pwsh -NoProfile -File $q' + (Join-Path $PSScriptRoot 'sign-file.ps1') + '$q $f'), '/DSign') } else { @() }
+    & $iscc /Qp "/DAppVersion=$version" "/DPayloadDir=$payloadDirectory" "/DOutputDir=$outputDirectory" @signing $script
     if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed.' }
 }
 finally {

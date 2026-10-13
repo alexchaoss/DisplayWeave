@@ -172,28 +172,22 @@ jobs:
       - name: Package the portable application
         run: ./scripts/package.ps1
 
+      # The module and version the artifact-signing-action steps above install for themselves. The setup is
+      # signed by ISCC while it compiles (sign-file.ps1), the only way to sign the uninstaller built into it.
+      - name: Install the signing module for the setup
+        if: env.SIGN == 'true'
+        run: Install-Module -Name ArtifactSigning -RequiredVersion 0.1.8 -Force -Repository PSGallery
+
       # Compiles the setup with the runner's preinstalled Inno Setup (build-setup.ps1 finds ISCC.exe).
       - name: Build the setup
-        timeout-minutes: 5
-        run: ./scripts/build-setup.ps1
+        timeout-minutes: 10
+        run: |
+          if ($env:SIGN -eq 'true') { ./scripts/build-setup.ps1 -Sign } else { ./scripts/build-setup.ps1 }
 
-      - name: Sign the setup
-        if: env.SIGN == 'true'
-        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
-        with:
-          endpoint: https://eus.codesigning.azure.net/
-          signing-account-name: displayweave
-          certificate-profile-name: displayweave-public
-          files-folder: ${{ github.workspace }}\release
-          files-folder-filter: exe
-
-      # Signing changed the setup, so its .sha256 is written again in build-setup.ps1's format.
       - name: Check the signatures
         if: env.SIGN == 'true'
         run: |
           $setup = Get-Item release/DisplayWeave-Setup-*.exe
-          $hash = (Get-FileHash -LiteralPath $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          [IO.File]::WriteAllText($setup.FullName + '.sha256', $hash + '  ' + $setup.Name + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
           $unsigned = @(@(Get-ChildItem dist -Recurse -Include *.exe, *.dll) + $setup | Where-Object { (Get-AuthenticodeSignature -LiteralPath $_.FullName).Status -ne 'Valid' })
           if ($unsigned.Count -gt 0) { throw "Not signed: $($unsigned.FullName -join ', ')" }
 
@@ -201,6 +195,15 @@ jobs:
       - name: Run the setup's end-to-end checks
         timeout-minutes: 5
         run: ./tests/setup-tests.ps1 -OutputDirectory test-results/ci
+
+      # The first test's install stays in place, so the uninstaller the setup wrote can be checked.
+      - name: Check the installed uninstaller's signature
+        if: env.SIGN == 'true'
+        run: |
+          $uninstallers = @(Get-ChildItem test-results/ci -Recurse -Filter unins000.exe)
+          if ($uninstallers.Count -eq 0) { throw 'The setup tests left no installed uninstaller to check.' }
+          $unsigned = @($uninstallers | Where-Object { (Get-AuthenticodeSignature -LiteralPath $_.FullName).Status -ne 'Valid' })
+          if ($unsigned.Count -gt 0) { throw "Uninstaller not signed: $($unsigned.FullName -join ', ')" }
 
       # A second sign-in, so Key Vault gets a token even if the first one has expired during the build.
       - name: Sign in to Azure for the release key

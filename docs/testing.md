@@ -18,6 +18,9 @@ DeepInstinct (a .NET setup carrying a ZIP and running PowerShell); the two conso
   or uninstalls, it asks only this install's running DisplayWeave to close. While another installation's instance runs
   it refuses, because the close request reaches every instance. It never terminates a process. The uninstaller removes
   the HKCU Run value only when that value points into its own folder.
+- The uninstaller Inno builds into the setup is code-signed too. In release builds, ISCC signs it while compiling,
+  through `scripts/sign-file.ps1` and the `ArtifactSigning` module that the signing action uses.
+- The setup no longer embeds the ZIP, so the ZIP is compressed again: 1,047,119 bytes, against 2,230,211 stored.
 - Chromium fullscreen: an isolated instance of the user's browser (temporary profile, `--start-fullscreen`) beside the installed 1.0.3 showed
   that it spreads its fullscreen window over the whole monitor after the fit on every restack (7680 × 2160), on
   losing focus (7680 × 2159, its taskbar workaround) and on regaining it (7680 × 2160). 1.0.3 put it back after
@@ -39,7 +42,12 @@ Results:
 - Launcher: normal start, rollback after two counted starts, counting a first failure, and `.ok` preventing rollback.
 - Not run: the new Chromium refit live on the display, because the installed DisplayWeave also fits any test window and
   is not stopped without the user's say-so. The Inno shutdown of a real owned instance (the updater's path) is also not
-  run live yet. Inno's generated `unins000.exe` is not code-signed.
+  run live yet.
+- Uninstaller signing, locally, with a throwaway self-signed certificate in place of Azure (deleted afterwards). Compiled
+  with `/DSign` and a stand-in sign tool shaped like the CI command, ISCC ran the tool on `uninst.e32.tmp` and then on the
+  setup. A test-mode install wrote `unins000.exe` signed with that certificate, beside a separate `unins000.msg`, and the
+  uninstall left only `data`. Not run locally: `sign-file.ps1` itself, which needs `pwsh`, the module and the Azure
+  sign-in. CI checks the setup's signature, and after the setup tests it checks the installed `unins000.exe`.
 - Incident during development: a non-test-mode setup run removed the user's HKCU Run value, which was restored in its
   1.0.3 form. The tests now pass `/testmode=1`, and the uninstaller only removes a value that starts its own install.
 

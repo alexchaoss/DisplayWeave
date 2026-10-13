@@ -37,6 +37,12 @@ CloseApplications=no
 UsePreviousAppDir=no
 ; The automated tests pass /testmode=1 so they touch no shared state (Start menu, uninstall registry).
 CreateUninstallRegKey=NeedUninstallReg
+#ifdef Sign
+; Release builds (build-setup.ps1 -Sign) sign the setup and the uninstaller built into it, so the installed
+; unins000.exe carries the same publisher signature as the rest of DisplayWeave.
+SignTool=artifactsigning
+SignedUninstaller=yes
+#endif
 
 [Files]
 ; The version payload is self-contained under versions\<version>\. Old version folders from earlier
