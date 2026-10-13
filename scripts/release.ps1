@@ -24,8 +24,10 @@ $test = Start-Process -FilePath (Join-Path $repository 'dist\DisplayWeave.exe') 
 if ($test.ExitCode -ne 0) { throw "Managed self-tests failed; see $report and its .rules/.automatic/.lifecycle reports." }
 foreach ($architecture in @('x64', 'x86')) {
     foreach ($mode in @('--self-test-policy', '--self-test-ipc')) {
-        & (Join-Path $native "native-v2-$architecture\RegionHookHost.exe") $mode | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "$architecture $mode failed." }
+        # The host is a GUI-subsystem program; wait on the process and read its exit code,
+        # as the call operator's $LASTEXITCODE does not apply to GUI processes.
+        $check = Start-Process -FilePath (Join-Path $native "native-v2-$architecture\RegionHookHost.exe") -ArgumentList $mode -WindowStyle Hidden -Wait -PassThru
+        if ($check.ExitCode -ne 0) { throw "$architecture $mode failed." }
     }
 }
 Write-Output 'Managed and native checks passed.'
