@@ -17,26 +17,30 @@ Download `DisplayWeave-Setup-<version>.exe` from the
 it. It installs or updates DisplayWeave for your Windows account (no administrator
 rights), keeps your regions and app rules, can turn on **Start DisplayWeave when I
 sign in**, and adds DisplayWeave to **Settings → Apps → Installed apps**. A running
-DisplayWeave is closed and reopened. The setup verifies its embedded package's
-SHA-256 checksum before installing.
+DisplayWeave is closed and reopened. The setup is built with Inno Setup; its own
+SHA-256 is published in the matching `.exe.sha256` file.
 
-From 1.0.0, the setup, the app and its native helpers (from 1.0.3 also its PowerShell
-scripts) are code-signed by Alexandre St-Pierre (Microsoft Artifact Signing); earlier
-releases are not. Windows SmartScreen may still show "Windows protected your PC" while
-the publisher builds reputation.
+From 1.0.5, the setup starts nothing through PowerShell: a signed launcher program
+opens DisplayWeave from the Start menu and at sign-in. From 1.0.0, the setup, the app,
+its native helpers and its launcher are code-signed by Alexandre St-Pierre (Microsoft
+Artifact Signing); earlier releases are not. Windows SmartScreen may still show
+"Windows protected your PC" while the publisher builds reputation.
 Choose **More info → Run anyway** only when it names Alexandre St-Pierre as the
 publisher and the file is from this releases page; its SHA-256 is in the matching
 `.exe.sha256` file.
 
 To uninstall, use **Settings → Apps → Installed apps → DisplayWeave → Uninstall**.
 It closes DisplayWeave and removes its program files, Start menu shortcut and startup
-entry. Your regions and app rules are kept unless you tick **Also delete my regions
-and app rules**. Files that another running app still has loaded are removed at your
-next sign-in. If you used **Restart as administrator** and a helper copy was still in
+entry. When it asks **Also delete your DisplayWeave regions and app rules?**, choose
+**No** to keep them (a silent uninstall always keeps them). If another DisplayWeave
+installation is running, the setup and the uninstaller stop and ask you to close it
+rather than closing it for you. A helper file that a still-running app has loaded can
+stay in `%LOCALAPPDATA%\DisplayWeave\versions`; delete it after closing that app. If you used **Restart as administrator** and a helper copy was still in
 use when DisplayWeave exited, delete `%ProgramFiles%\DisplayWeave` as administrator.
 
-For scripted use: `--quiet`, `--no-launch`, `--startup Enable|Disable|Preserve`,
-`--uninstall`, `--remove-settings` and `--log <file>`.
+For scripted or unattended use, the setup takes the standard Inno Setup switches, for
+example `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="<folder>" /LOG="<file>"`. The
+automatic updater runs it this way.
 
 ### Automatic updates
 
@@ -77,46 +81,17 @@ version, which stays installed next to the newer one. Version 0.5.12 and older d
 a given-up version, so once back on one of them it installs that version again at its
 next check.
 
-### With the install script
+### Install layout
 
-Download `install.ps1` from the
-[releases page](https://github.com/alexchaoss/DisplayWeave/releases).
-Without a package path, the script downloads the newest release anonymously over
-HTTPS; no GitHub account is needed:
+The default installation is `%LOCALAPPDATA%\DisplayWeave`. Each release has its own
+folder under `versions`; the signed launcher (`DisplayWeave.Launcher.exe`) and the
+Start menu shortcut select the current version named in `current.json`. Layout and app
+rules live in `data` and survive updates. The setup does not request administrator
+rights, and its silent switches (above) choose a different folder with `/DIR=`.
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
-```
-
-Run the same script again to install the newest published release, including
-preview releases. To choose a release, add `-Version v<version>`. Like the app's
-updater, the script installs a downloaded release only when its checksum carries a
-DisplayWeave release-key signature; releases up to 0.5.9 have none, so it refuses
-them. It then verifies the ZIP's SHA-256 checksum. It does not request administrator
-rights.
-
-You can also download the ZIP and its `.sha256` file from the releases page yourself
-and install them, which skips the signature check:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -PackagePath .\DisplayWeave-0.5.9-preview.zip -ChecksumPath .\DisplayWeave-0.5.9-preview.zip.sha256
-```
-
-The default installation is `%LOCALAPPDATA%\DisplayWeave`. Each release has its
-own folder under `versions`; the stable launcher and Start menu shortcut select
-the current version. Layout and app rules live in `data` and survive updates.
-For a first migration from a portable copy, add `-MigrateFrom "C:\path\to\portable"`.
-Existing installed settings take priority. Exit older portable versions manually
-before migrating; versions before 0.4 cannot receive the updater's exit request.
-The updater never forcibly closes other applications.
-If the portable copy already starts with Windows, use `-Startup Enable` during
-migration to point its startup entry at the installed launcher.
-
-Under **Status & help**, check **Start DisplayWeave with Windows** to start
-quietly in the tray when you sign in. Uncheck it to disable startup. The installer
-preserves your startup choice; `-Startup Enable` or `-Startup Disable` can change
-it explicitly. A first installation leaves it disabled. `-NoLaunch` installs
-without opening the app. `-InstallRoot` chooses a different installation folder.
+Under **Status & help**, check **Start DisplayWeave with Windows** to start quietly in
+the tray when you sign in; uncheck it to disable startup. A first installation offers
+the same choice and leaves it off by default; an update keeps whatever you chose.
 
 Updates leave older version folders in place because apps can still have their
 native component loaded. Compatible hooks on already-prepared windows reconnect
@@ -362,7 +337,10 @@ their window handling is hooked. From 0.5.9, DisplayWeave never loads anything i
 window of Chromium's `Chrome_WidgetWin_*` class: automatic handling and Force rules
 use the outside fit described above, and a manual Force request explains why.
 The native helper refuses these windows too. From 0.5.11 their own fullscreen mode
-counts as borderless fullscreen and is fitted from outside too. An app hooked by 0.5.6
+counts as borderless fullscreen and is fitted from outside too. Such a fullscreen window
+(a video, for example) spreads over the whole display again whenever it is clicked or
+loses or regains focus; from 1.0.5 DisplayWeave puts it back as soon as it moves, every
+time, instead of after a pause or giving up. An app hooked by 0.5.6
 keeps that component until it restarts; it does nothing while no DisplayWeave helper
 controls it, but restart the app if it still crashes.
 

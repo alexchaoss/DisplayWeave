@@ -4,6 +4,45 @@ Commands recorded below before October 10, 2026 use the old root-level script pa
 
 The virtual-display projection prototype and its evidence moved to the `prototype` branch on October 11, 2026. Entries below that mention prototype or projection checks record what was run at the time.
 
+## Inno Setup, native launcher, windowed helpers and fullscreen Chromium refit (1.0.5, October 13, 2026)
+
+On VirusTotal, 1.0.4 drew six detections. Per file: the setup alone drew Kaspersky Monder.gen, Elastic, SecureAge and
+DeepInstinct (a .NET setup carrying a ZIP and running PowerShell); the two console helpers drew Ikarus Krypt and Google
+(no version information or manifest); `DisplayWeave.exe` drew VirIT. 1.0.5 changes the packaging, not what the app does:
+
+- The native helpers and `RegionHook.dll` carry version resources, and the helpers have an `asInvoker` manifest and the
+  GUI subsystem (no console window). Scripts start them with `Start-Process -Wait -PassThru`.
+- `DisplayWeave.Launcher.exe` (C# 5, signed) replaces `Launch-DisplayWeave.ps1` for the Start menu, the sign-in entry and
+  rollback, so nothing runs PowerShell at sign-in.
+- An Inno Setup script replaces `Setup.cs` and `install.ps1`, so nothing runs PowerShell to install. Before it installs
+  or uninstalls, it asks only this install's running DisplayWeave to close. While another installation's instance runs
+  it refuses, because the close request reaches every instance. It never terminates a process. The uninstaller removes
+  the HKCU Run value only when that value points into its own folder.
+- Chromium fullscreen: an isolated instance of the user's browser (temporary profile, `--start-fullscreen`) beside the installed 1.0.3 showed
+  that it spreads its fullscreen window over the whole monitor after the fit on every restack (7680 × 2160), on
+  losing focus (7680 × 2159, its taskbar workaround) and on regaining it (7680 × 2160). 1.0.3 put it back after
+  95 to 190 ms each time. Clicks less than 2 s apart hit the retry delay, so the window stayed over the display for up
+  to 2 s. Two resizes before a tick saw the window in its region ended the fit for good, with a Borderless in region
+  offer. From 1.0.5 a fitted Chromium window is refitted when it moves (`RefitsAtOnce`), with no retry delay and no offer.
+  It stops only after four moves without one tick seeing it in its region.
+
+Results:
+
+- `scripts/release.ps1` (x64, unsigned local build, Inno Setup 7 locally): managed and native checks passed, setup 5 of 5:
+  layout, update recording `previousVersion`, uninstall keeping settings, a running instance that does not close stops the
+  install with exit code 7 and is left running, and the HKCU Run value and Start menu stay unchanged. Here the refusal
+  came from the installed 1.0.3 counting as another installation. CI, where nothing else runs, covers the other branch:
+  the stand-in does not accept `--exit-for-update`. CI builds with the runners' Inno Setup 6.7.1.
+- Managed self-tests after the Chromium change: rules 67 (new: a borderless Chromium window covering its monitor is
+  refitted in each of three rounds, while a game waits out the retry delay; no offer for either), automatic 14,
+  lifecycle 34, core 20.
+- Launcher: normal start, rollback after two counted starts, counting a first failure, and `.ok` preventing rollback.
+- Not run: the new Chromium refit live on the display, because the installed DisplayWeave also fits any test window and
+  is not stopped without the user's say-so. The Inno shutdown of a real owned instance (the updater's path) is also not
+  run live yet. Inno's generated `unins000.exe` is not code-signed.
+- Incident during development: a non-test-mode setup run removed the user's HKCU Run value, which was restored in its
+  1.0.3 form. The tests now pass `/testmode=1`, and the uninstaller only removes a value that starts its own install.
+
 ## Uncompressed package (1.0.4, October 13, 2026)
 
 Four engines still flagged the 1.0.3 setup (Elastic, Ikarus Trojan.Win64.Krypt, Kaspersky Trojan.Win32.Monder.gen,
