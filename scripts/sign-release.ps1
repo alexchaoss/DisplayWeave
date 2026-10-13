@@ -1,10 +1,12 @@
-# Signs a DisplayWeave release with the maintainer's release key. Run it on your own computer, never in
-# CI: the key must never reach GitHub. Installed copies and install.ps1 refuse a release without it.
+# Signs a DisplayWeave release with a release key: the maintainer's key in this Windows account, or with
+# -KeyVault the key in Azure Key Vault that CI may use once the maintainer approves a release build.
+# Neither private key can be exported. Installed copies and install.ps1 refuse a release without it.
 #   -NewKey                         create the key in this Windows account (it cannot be exported) and pin it
 #   -PinKey <base64>                pin another public key, such as a backup key made on another computer
 #   -Version <v>                    check the CI-built draft release v<v>, sign it and publish it
 #   -Version <v> -Directory <dir>   sign a local build in <dir> (scripts\release.ps1 -Publish does this)
-param([string]$Version, [string]$Directory, [switch]$NewKey, [string]$PinKey)
+#   -KeyVault <vault>/<key>         with -Directory: sign with that Key Vault key through the signed-in az CLI (CI)
+param([string]$Version, [string]$Directory, [switch]$NewKey, [string]$PinKey, [string]$KeyVault)
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
 $github = 'alexchaoss/DisplayWeave'
@@ -41,26 +43,61 @@ function Add-PinnedKey([string]$Key) {
     }
 }
 
-# Signs each file's .sha256 after checking that it names that file and matches its bytes.
+function ConvertFrom-Base64Url([string]$Text) {
+    $Text = $Text.Replace('-', '+').Replace('_', '/')
+    return [Convert]::FromBase64String($Text + ('=' * ((4 - $Text.Length % 4) % 4)))
+}
+
+# Signs each file's .sha256 after checking that it names that file and matches its bytes, and checks
+# each signature with the public key the way installed copies do before writing it.
 function Write-ReleaseSignatures([string]$Folder) {
-    if (-not [Security.Cryptography.CngKey]::Exists($keyName)) { throw "This Windows account has no '$keyName' key. Run .\scripts\sign-release.ps1 -NewKey first." }
-    $key = [Security.Cryptography.CngKey]::Open($keyName)
-    $public = [Convert]::ToBase64String($key.Export([Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob))
+    if ($KeyVault) {
+        $vault, $vaultKey = $KeyVault -split '/', 2
+        $jwk = az keyvault key show --vault-name $vault --name $vaultKey --query key --output json | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0) { throw "Could not read the Key Vault key $KeyVault." }
+        # ECCPUBLICBLOB: BCRYPT_ECDSA_PUBLIC_P256_MAGIC and the 32-byte coordinate length, then x and y.
+        $blob = [byte[]](0x45, 0x43, 0x53, 0x31, 0x20, 0, 0, 0) + (ConvertFrom-Base64Url $jwk.x) + (ConvertFrom-Base64Url $jwk.y)
+        $request = [IO.Path]::GetTempFileName()
+        # Key Vault's ES256 signs a SHA-256 digest and returns r then s, the format ECDsaCng verifies.
+        $sign = {
+            param([byte[]]$Data)
+            $digest = [Convert]::ToBase64String([Security.Cryptography.SHA256]::Create().ComputeHash($Data)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+            [IO.File]::WriteAllText($request, (@{ alg = 'ES256'; value = $digest } | ConvertTo-Json -Compress))
+            $result = az rest --method post --url "https://$vault.vault.azure.net/keys/$vaultKey/sign?api-version=7.4" --resource https://vault.azure.net --body "@$request" --output json | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw "Key Vault did not sign with $KeyVault." }
+            return ConvertFrom-Base64Url $result.value
+        }
+    } else {
+        if (-not [Security.Cryptography.CngKey]::Exists($keyName)) { throw "This Windows account has no '$keyName' key. Run .\scripts\sign-release.ps1 -NewKey first." }
+        $key = [Security.Cryptography.CngKey]::Open($keyName)
+        $blob = $key.Export([Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob)
+        $ecdsa = New-Object Security.Cryptography.ECDsaCng($key)
+        $ecdsa.HashAlgorithm = [Security.Cryptography.CngAlgorithm]::Sha256
+        $sign = { param([byte[]]$Data) return $ecdsa.SignData($Data) }
+    }
+    $public = [Convert]::ToBase64String($blob)
     foreach ($pin in $pins) {
-        if ((Get-PinnedKeys $pin) -notcontains $public) { throw "This computer's release key is not pinned in $($pin.File), so its signatures would be refused." }
+        if ((Get-PinnedKeys $pin) -notcontains $public) { throw "This release key is not pinned in $($pin.File), so its signatures would be refused." }
     }
-    $ecdsa = New-Object Security.Cryptography.ECDsaCng($key)
-    $ecdsa.HashAlgorithm = [Security.Cryptography.CngAlgorithm]::Sha256
+    $verifier = New-Object Security.Cryptography.ECDsaCng([Security.Cryptography.CngKey]::Import($blob, [Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob))
+    $verifier.HashAlgorithm = [Security.Cryptography.CngAlgorithm]::Sha256
     $signatures = @()
-    foreach ($name in @("DisplayWeave-Setup-$Version.exe", "DisplayWeave-$Version.zip")) {
-        $file = Join-Path $Folder $name
-        $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ([IO.File]::ReadAllText("$file.sha256").Trim() -cne "$hash  $name") { throw "$name.sha256 does not describe $name; nothing was signed." }
-        [IO.File]::WriteAllText("$file.sha256.sig", [Convert]::ToBase64String($ecdsa.SignData([IO.File]::ReadAllBytes("$file.sha256"))))
-        $signatures += "$file.sha256.sig"
+    try {
+        foreach ($name in @("DisplayWeave-Setup-$Version.exe", "DisplayWeave-$Version.zip")) {
+            $file = Join-Path $Folder $name
+            $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ([IO.File]::ReadAllText("$file.sha256").Trim() -cne "$hash  $name") { throw "$name.sha256 does not describe $name; nothing was signed." }
+            $data = [IO.File]::ReadAllBytes("$file.sha256")
+            [byte[]]$signature = & $sign $data
+            if (-not $verifier.VerifyData($data, $signature)) { throw "The signature of $name.sha256 does not verify with the release key." }
+            [IO.File]::WriteAllText("$file.sha256.sig", [Convert]::ToBase64String($signature))
+            $signatures += "$file.sha256.sig"
+        }
     }
-    $ecdsa.Dispose()
-    $key.Dispose()
+    finally {
+        $verifier.Dispose()
+        if ($KeyVault) { Remove-Item -LiteralPath $request -ErrorAction SilentlyContinue } else { $ecdsa.Dispose(); $key.Dispose() }
+    }
     return $signatures
 }
 

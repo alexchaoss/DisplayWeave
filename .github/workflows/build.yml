@@ -207,6 +207,22 @@ jobs:
         timeout-minutes: 5
         run: ./tests/setup-tests.ps1 -OutputDirectory test-results/ci
 
+      # A second sign-in, so Key Vault gets a token even if the first one has expired during the build.
+      - name: Sign in to Azure for the release key
+        if: env.SIGN == 'true'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      # The release key in Azure Key Vault signs the tested checksums; the publish job releases them.
+      - name: Sign the checksums with the release key
+        if: env.SIGN == 'true'
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: ./scripts/sign-release.ps1 -Version $env:VERSION -Directory release -KeyVault displayweave-release/release-signing
+
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -229,14 +245,14 @@ jobs:
             release/DisplayWeave-*.zip.sha256
             release/DisplayWeave-Setup-*.exe
             release/DisplayWeave-Setup-*.exe.sha256
+            release/DisplayWeave-*.sha256.sig
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
 
-  # A push to main whose version.txt has no release yet turns the files the build job just tested
-  # into a draft release with a build-provenance attestation. Installed copies never see drafts:
-  # the maintainer checks, signs and publishes it with scripts/sign-release.ps1, using a key that
-  # is never on GitHub, so nothing here can ship an update by itself.
+  # A push to main whose version.txt has no release yet turns the files the build job just signed
+  # and tested into a draft release with a build-provenance attestation. Installed copies never see
+  # drafts; the publish job adds the release-key signatures and publishes it.
   release:
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -291,3 +307,32 @@ jobs:
             "DisplayWeave-Setup-$VERSION.exe" "DisplayWeave-Setup-$VERSION.exe.sha256" \
             --repo "$GITHUB_REPOSITORY" --draft --prerelease --title "DisplayWeave $VERSION" --target "$GITHUB_SHA" --generate-notes
           echo "Draft v$VERSION is ready. Sign and publish it with: .\scripts\sign-release.ps1 -Version $VERSION"
+
+  # Publishes the draft with the signatures that the release key in Azure Key Vault made in the release
+  # build. That build signed only after the maintainer approved the release environment, so that
+  # approval ships the update; without it nothing is signed or published.
+  publish:
+    needs: [version, release]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download the release-key signatures
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: DisplayWeave-Windows-${{ github.sha }}
+          path: assets
+
+      - name: Publish the signed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          gh release upload "v$VERSION" assets/*.sha256.sig --repo "$GITHUB_REPOSITORY"
+          # A version without a suffix such as -preview is a full release and becomes the latest one.
+          final=(--prerelease=false --latest)
+          case "$VERSION" in *-*) final=() ;; esac
+          gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" --draft=false "${final[@]}"
+          echo "Published v$VERSION."

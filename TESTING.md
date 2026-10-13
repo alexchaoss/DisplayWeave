@@ -4,6 +4,18 @@ Commands recorded below before October 10, 2026 use the old root-level script pa
 
 The virtual-display projection prototype and its evidence moved to the `prototype` branch on October 11, 2026. Entries below that mention prototype or projection checks record what was run at the time.
 
+## Release-key signing in CI (after 1.0.1, October 13, 2026)
+
+From the next version, the approved windows-2022 release build signs the `.sha256` files with the Key Vault key
+(`sign-release.ps1 -Directory release -KeyVault displayweave-release/release-signing`) and a new `publish` job
+publishes the draft with them.
+
+- `sign-release.ps1 -KeyVault` on throwaway `0.0.0-test` files, with an `az` stand-in built on Az PowerShell that
+  makes the same Key Vault calls and prints the same JSON: two 64-byte signatures, each verified against the pinned
+  key before it was written; a changed `.sha256` was refused and nothing was signed.
+- Not yet run: the real Azure CLI on the runner, the second OIDC sign-in and the `publish` job. The first release
+  after 1.0.1 exercises them; if a step fails, the version stays a draft.
+
 ## Second release key in Azure Key Vault (1.0.1, October 13, 2026)
 
 1.0.1 pins a second release key next to the maintainer's local one, so that CI can sign later versions; the app is

@@ -8,9 +8,10 @@ Fixes go into the next release.
 ## How releases are protected
 
 - Installed copies and `install.ps1` install a release only when its `.sha256` file carries a
-  signature from a DisplayWeave release key. The private key is kept on the maintainer's
-  computer and never on GitHub, so access to the repository or its releases is not enough to
-  ship an update.
+  signature from a DisplayWeave release key. The private keys cannot be exported: one is on the
+  maintainer's computer, and from 1.0.1 one is in Azure Key Vault. CI may use the Key Vault key
+  only in the build of a new version on `main`, after the maintainer approves that build in
+  GitHub, so access to the repository or its releases alone is not enough to ship an update.
 - CI builds each release on GitHub-hosted runners and records a build-provenance attestation.
   Check a download with `gh attestation verify <file> --repo alexchaoss/DisplayWeave`.
 - From 1.0.0, CI code-signs the setup, the app and its native helpers as Alexandre St-Pierre
