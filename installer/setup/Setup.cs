@@ -22,7 +22,7 @@ namespace DisplayWeave.Setup
 
         internal sealed class Options
         {
-            internal bool Uninstall, Quiet, NoLaunch, RemoveSettings;
+            internal bool Uninstall, Quiet, NoLaunch, RemoveSettings, RemoveUninstaller;
             internal string Root = DefaultRoot, Startup, Log;
         }
 
@@ -40,6 +40,7 @@ namespace DisplayWeave.Setup
                     else if (arg == "--quiet") options.Quiet = true;
                     else if (arg == "--no-launch") options.NoLaunch = true;
                     else if (arg == "--remove-settings") options.RemoveSettings = true;
+                    else if (arg == "--remove-uninstaller") options.RemoveUninstaller = true;
                     else if (arg == "--install-root" && i + 1 < args.Length) options.Root = Path.GetFullPath(args[++i]).TrimEnd('\\');
                     else if (arg == "--startup" && i + 1 < args.Length && Regex.IsMatch(args[i + 1], "^(Preserve|Enable|Disable)$")) options.Startup = args[++i];
                     else if (arg == "--log" && i + 1 < args.Length) options.Log = Path.GetFullPath(args[++i]);
@@ -51,6 +52,7 @@ namespace DisplayWeave.Setup
                 if (!options.Quiet) MessageBox.Show(ex.Message, "DisplayWeave Setup", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return 2;
             }
+            if (options.RemoveUninstaller) return Setup.RemoveUninstaller(options.Root);
             if (options.Quiet)
             {
                 string output;
@@ -136,9 +138,13 @@ namespace DisplayWeave.Setup
             string self = Path.GetFullPath(Application.ExecutablePath);
             if (String.Equals(Path.GetDirectoryName(self), Path.GetFullPath(options.Root), StringComparison.OrdinalIgnoreCase))
             {
-                // A running program cannot delete itself; remove it and the then-empty folder once this process ends.
-                ProcessStartInfo cleanup = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"),
-                    "/d /c ping -n 3 127.0.0.1 >nul & del /f /q \"" + self + "\" & rd \"" + options.Root + "\"");
+                // A running program cannot delete itself: a copy in %TEMP% removes it and the then-empty folder once
+                // this process ends. The copy stays in %TEMP% for Windows to clean up.
+                string helper = Path.Combine(Path.GetTempPath(), "DisplayWeaveUninstall-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(helper);
+                helper = Path.Combine(helper, "DisplayWeave Uninstall Cleanup.exe");
+                File.Copy(self, helper);
+                ProcessStartInfo cleanup = new ProcessStartInfo(helper, "--remove-uninstaller --install-root \"" + options.Root + "\"");
                 cleanup.CreateNoWindow = true;
                 cleanup.UseShellExecute = false;
                 Process.Start(cleanup).Dispose();
@@ -150,6 +156,18 @@ namespace DisplayWeave.Setup
                 if (Directory.Exists(options.Root) && Directory.GetFileSystemEntries(options.Root).Length == 0) Directory.Delete(options.Root);
             }
             return 0;
+        }
+
+        // Runs from the copy in %TEMP%. The uninstaller in the installation folder stays locked until it exits, so
+        // keep trying for half a minute; the folder itself is removed only when nothing else is left in it.
+        internal static int RemoveUninstaller(string root)
+        {
+            string copy = Path.Combine(root, Program.UninstallerName);
+            for (DateTime deadline = DateTime.UtcNow.AddSeconds(30); File.Exists(copy) && DateTime.UtcNow < deadline; Thread.Sleep(250))
+                try { File.Delete(copy); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            try { if (Directory.Exists(root) && Directory.GetFileSystemEntries(root).Length == 0) Directory.Delete(root); }
+            catch (IOException) { } catch (UnauthorizedAccessException) { }
+            return File.Exists(copy) ? 1 : 0;
         }
 
         private static bool IsDefaultRoot(string root)
@@ -191,7 +209,7 @@ namespace DisplayWeave.Setup
                     using (FileStream file = new FileStream(Path.Combine(directory, name), FileMode.CreateNew))
                         input.CopyTo(file);
                 ProcessStartInfo start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"),
-                    "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + Path.Combine(directory, "install.ps1") + "\" " + arguments(directory));
+                    "-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File \"" + Path.Combine(directory, "install.ps1") + "\" " + arguments(directory));
                 start.UseShellExecute = false;
                 start.CreateNoWindow = true;
                 start.RedirectStandardOutput = true;

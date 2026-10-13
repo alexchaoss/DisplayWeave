@@ -6,6 +6,7 @@ param([string]$OutputDirectory)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression
 $installer = Join-Path (Split-Path -Parent $PSScriptRoot) 'installer\install.ps1'
+$launcher = Join-Path (Split-Path -Parent $PSScriptRoot) 'installer\Launch-DisplayWeave.ps1'
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = Join-Path (Split-Path -Parent $PSScriptRoot) 'test-results' }
 $testRoot = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) ('installer-' + [DateTime]::Now.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 [void][IO.Directory]::CreateDirectory($testRoot)
@@ -29,6 +30,7 @@ function New-Fixture([string]$Name, [string]$Version, [object[]]$Extra = @(), [s
     $archive = New-Object IO.Compression.ZipArchive($stream, [IO.Compression.ZipArchiveMode]::Create, $true)
     try {
         $items = @([pscustomobject]@{ Name = 'release.json'; Content = ('{"version":"' + $Version + '"}'); Attributes = 0 })
+        if ($Omit -ne 'Launch-DisplayWeave.ps1') { $items += [pscustomobject]@{ Name = 'Launch-DisplayWeave.ps1'; Content = [IO.File]::ReadAllText($launcher); Attributes = 0 } }
         foreach ($file in @('DisplayWeave.exe', 'DisplayWeave.Core.dll', 'native-v2-x64/RegionHookHost.exe', 'native-v2-x64/RegionHook.dll',
             'native-v2-x86/RegionHookHost.exe', 'native-v2-x86/RegionHook.dll')) {
             if ($file -ne $Omit) { $items += [pscustomobject]@{ Name = $file; Content = 'Non-executable installer test fixture'; Attributes = 0 } }
@@ -90,7 +92,7 @@ Test-Installer 'First installation creates a stable pointer and migrates only mi
     Assert-Installer ([IO.File]::Exists((Join-Path $installation 'DisplayWeave.lnk'))) 'Install-root shortcut is missing.'
     $errors = $null; $tokens = $null
     [void][Management.Automation.Language.Parser]::ParseFile((Join-Path $installation 'Launch-DisplayWeave.ps1'), [ref]$tokens, [ref]$errors)
-    Assert-Installer ($errors.Count -eq 0) 'Generated launcher has PowerShell syntax errors.'
+    Assert-Installer ($errors.Count -eq 0) 'Installed launcher has PowerShell syntax errors.'
 }
 
 Test-Installer 'Update retains old version and existing user settings' {
@@ -116,7 +118,7 @@ Test-Installer 'The launcher goes back to the replaced version after two failed 
     [IO.File]::WriteAllText((Join-Path $health '0.4.1-preview.starts'), "1`r`n2`r`n", $utf8)
     # The fixture's programs are not executable, so each launch fails after its bookkeeping and nothing starts.
     $powershell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $installation 'Launch-DisplayWeave.ps1') + '"'
+    $arguments = '-NoProfile -ExecutionPolicy RemoteSigned -File "' + (Join-Path $installation 'Launch-DisplayWeave.ps1') + '"'
     [IO.File]::WriteAllText((Join-Path $health '0.4.1-preview.ok'), '', $utf8)
     Start-Process -FilePath $powershell -ArgumentList $arguments -WindowStyle Hidden -Wait
     Assert-Installer ([IO.File]::ReadAllText($pointerPath) -eq $before) 'A version that ran cleanly was given up.'
@@ -146,6 +148,13 @@ Test-Installer 'Bad SHA-256 is rejected before extraction and pointer changes' {
 
 Test-Installer 'Checksum is mandatory for a local package' {
     Assert-Rejected { & $installer -PackagePath $first.Zip -InstallRoot (Join-Path $testRoot 'missing-checksum') -Startup Preserve -NoLaunch | Out-Null }
+}
+
+Test-Installer 'A package without the launcher is rejected' {
+    $fixture = New-Fixture 'no-launcher' '0.4.2-preview' @() 'Launch-DisplayWeave.ps1'
+    $target = Join-Path $testRoot 'no-launcher-install'
+    Assert-Rejected { Invoke-Fixture $fixture $target }
+    Assert-Installer (-not [IO.File]::Exists((Join-Path $target 'current.json'))) 'A package without a launcher was made current.'
 }
 
 Test-Installer 'Parent-directory ZIP traversal is rejected' {

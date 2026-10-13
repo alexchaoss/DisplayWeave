@@ -112,6 +112,19 @@ jobs:
             ${{ github.workspace }}\dist\DisplayWeave.exe
             ${{ github.workspace }}\dist\DisplayWeave.Core.dll
 
+      # Before packaging: the ZIP ships both scripts and the setup embeds install.ps1. Signed scripts
+      # can run with -ExecutionPolicy RemoteSigned and under App Control policies such as Smart App Control.
+      - name: Sign the installer scripts
+        if: env.SIGN == 'true'
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: https://eus.codesigning.azure.net/
+          signing-account-name: displayweave
+          certificate-profile-name: displayweave-public
+          files: |
+            ${{ github.workspace }}\installer\install.ps1
+            ${{ github.workspace }}\installer\Launch-DisplayWeave.ps1
+
       # These test modes do not open application windows, inject hooks, or change
       # the desktop. Monitor/window rendering tests require an interactive desktop.
       - name: Run managed and native policy tests
@@ -199,7 +212,8 @@ jobs:
           $setup = Get-Item release/DisplayWeave-Setup-*.exe
           $hash = (Get-FileHash -LiteralPath $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           [IO.File]::WriteAllText($setup.FullName + '.sha256', $hash + '  ' + $setup.Name + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
-          $unsigned = @(@(Get-ChildItem dist -Recurse -Include *.exe, *.dll) + $setup | Where-Object { (Get-AuthenticodeSignature -LiteralPath $_.FullName).Status -ne 'Valid' })
+          $scripts = @(Get-Item installer/install.ps1, installer/Launch-DisplayWeave.ps1)
+          $unsigned = @(@(Get-ChildItem dist -Recurse -Include *.exe, *.dll) + $scripts + $setup | Where-Object { (Get-AuthenticodeSignature -LiteralPath $_.FullName).Status -ne 'Valid' })
           if ($unsigned.Count -gt 0) { throw "Not signed: $($unsigned.FullName -join ', ')" }
 
       # Quiet-mode setup runs against a temporary install root; nothing is launched or registered.

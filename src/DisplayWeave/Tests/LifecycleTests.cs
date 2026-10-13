@@ -83,7 +83,7 @@ namespace DisplayWeave
                 string command = StartupRegistration.BuildCommand(@"C:\Apps\DisplayWeave\versions\0.4\DisplayWeave.exe", @"C:\Apps\DisplayWeave\data\",
                     delegate(string candidate) { inspected = candidate; return true; });
                 Assert(inspected == @"C:\Apps\DisplayWeave\Launch-DisplayWeave.ps1", "Wrong launcher checked.");
-                Assert(command == PowerShellPrefix() + " -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"C:\\Apps\\DisplayWeave\\Launch-DisplayWeave.ps1\" -Minimized", "Unstable installed command.");
+                Assert(command == PowerShellPrefix() + " -NoProfile -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File \"C:\\Apps\\DisplayWeave\\Launch-DisplayWeave.ps1\" -Minimized", "Unstable installed command.");
             });
             test("Missing launcher falls back to the current portable command", delegate
             {

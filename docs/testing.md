@@ -4,6 +4,22 @@ Commands recorded below before October 10, 2026 use the old root-level script pa
 
 The virtual-display projection prototype and its evidence moved to the `prototype` branch on October 11, 2026. Entries below that mention prototype or projection checks record what was run at the time.
 
+## Installer without Bypass or a self-delete command (1.0.3, October 13, 2026)
+
+Five VirusTotal engines flagged the 1.0.2 setup (Kaspersky Trojan.Win32.Monder.gen, Ikarus Trojan.Win64.Krypt, Elastic,
+Google, SecureAge); Defender on the development computer, with cloud protection, found nothing. 1.0.3 removes the
+installer patterns that look like a dropper, without hiding anything: PowerShell runs with `-ExecutionPolicy RemoteSigned`
+instead of `Bypass` (setup, shortcut, startup entry, launch, app), CI signs `install.ps1` and the launcher, which is now
+a packaged file, and the uninstaller is removed by a copy of itself in `%TEMP%` instead of `cmd ping … & del`.
+Whether the engines still flag it is checked on VirusTotal after the release.
+
+- `scripts/release.ps1` (x64, unsigned local build): managed and native checks passed, installer 22 of 22 (new: a
+  package without the launcher is refused and nothing is made current), setup 6 of 6, including the quiet uninstall
+  whose uninstaller copy disappears after it exits. Test packages now carry the real launcher.
+- The built setup and every `.exe`, `.dll` and `.ps1` in the ZIP contain none of `ExecutionPolicy Bypass`, `ping -n`,
+  `127.0.0.1` or `del /f`, as ASCII or UTF-16.
+- Not run here: signing the two scripts, which only CI does; the release build checks their signatures.
+
 ## Faster update checks and the first automated release (1.0.2, October 13, 2026)
 
 1.0.2 checks for updates about a second after start instead of a minute, then every hour instead of every six,

@@ -20,9 +20,10 @@ sign in**, and adds DisplayWeave to **Settings → Apps → Installed apps**. A 
 DisplayWeave is closed and reopened. The setup verifies its embedded package's
 SHA-256 checksum before installing.
 
-From 1.0.0, the setup, the app and its native helpers are code-signed by Alexandre
-St-Pierre (Microsoft Artifact Signing); earlier releases are not. Windows SmartScreen
-may still show "Windows protected your PC" while the publisher builds reputation.
+From 1.0.0, the setup, the app and its native helpers (from 1.0.3 also its PowerShell
+scripts) are code-signed by Alexandre St-Pierre (Microsoft Artifact Signing); earlier
+releases are not. Windows SmartScreen may still show "Windows protected your PC" while
+the publisher builds reputation.
 Choose **More info → Run anyway** only when it names Alexandre St-Pierre as the
 publisher and the file is from this releases page; its SHA-256 is in the matching
 `.exe.sha256` file.

@@ -63,7 +63,7 @@ namespace DisplayWeave
                 }
             }
             string command = launcher != null ?
-                QuoteArgument(SystemPowerShellPath()) + " -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File " + QuoteArgument(launcher) + " -Minimized" :
+                QuoteArgument(SystemPowerShellPath()) + " -NoProfile -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File " + QuoteArgument(launcher) + " -Minimized" :
                 QuoteArgument(fullExecutable) + " --minimized --data-dir " + QuoteArgument(fullData);
             if (!IsUsableCommand(command))
                 throw new ArgumentException("The Windows startup command exceeds the 260-character limit. Move DisplayWeave to a shorter path before enabling startup.");

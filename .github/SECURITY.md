@@ -14,7 +14,8 @@ Fixes go into the next release.
   GitHub, so access to the repository or its releases alone is not enough to ship an update.
 - CI builds each release on GitHub-hosted runners and records a build-provenance attestation.
   Check a download with `gh attestation verify <file> --repo alexchaoss/DisplayWeave`.
-- From 1.0.0, CI code-signs the setup, the app and its native helpers as Alexandre St-Pierre
-  (Microsoft Artifact Signing), only in the build of a new version on `main` after the maintainer
-  approves it. SmartScreen may still warn while the publisher builds reputation. Earlier releases
-  are unsigned; compare a download with its `.sha256` file from the releases page.
+- From 1.0.0, CI code-signs the setup, the app and its native helpers (from 1.0.3 also its
+  PowerShell scripts) as Alexandre St-Pierre (Microsoft Artifact Signing), only in the build of a
+  new version on `main` after the maintainer approves it. SmartScreen may still warn while the
+  publisher builds reputation. Earlier releases are unsigned; compare a download with its `.sha256`
+  file from the releases page.
