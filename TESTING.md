@@ -19,6 +19,12 @@ The virtual-display projection prototype and its evidence moved to the `prototyp
 - The 1.0.0 release build's **Check the signatures** step fails the build unless every `.exe` and `.dll` in `dist`
   (native helpers, app, engine) and the setup has a valid signature; that run is recorded in the GitHub Actions
   history, not here, because this file ships inside it.
+- Run 38398131641 on `9f70bb0`: the first attempt failed at the Azure sign-in (AADSTS700213) because GitHub's subject
+  carries the owner and repository IDs; after the federated credential's subject was changed to that form, the
+  re-run of the failed jobs signed, passed every check and created the v1.0.0 draft. The draft, downloaded to an
+  empty folder and not run: both `.sha256` files match; all eight binaries in the ZIP and the setup have a Valid
+  signature from `CN=Alexandre St-Pierre` with a timestamp; the helper hashes embedded in `DisplayWeave.exe` match
+  the six signed helpers. (This bullet was added after the build, so the 1.0.0 package does not contain it.)
 - Not tested: SmartScreen's reaction to the new publisher, and administrator mode with signed helpers on this
   computer.
 
