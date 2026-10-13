@@ -40,10 +40,11 @@ For scripted use: `--quiet`, `--no-launch`, `--startup Enable|Disable|Preserve`,
 ### Automatic updates
 
 An installed DisplayWeave checks the public
-[releases page](https://github.com/alexchaoss/DisplayWeave/releases) a minute after
-it starts and then every six hours. It reads the releases anonymously over HTTPS: no
-GitHub account, token or GitHub CLI is needed. If the check fails (for example while
-offline), **Status & help** says why and it tries again later.
+[releases page](https://github.com/alexchaoss/DisplayWeave/releases) as soon as it
+starts and then every hour (before 1.0.2: a minute after start, then every six hours).
+It reads the releases anonymously over HTTPS: no GitHub account, token or GitHub CLI
+is needed. If the check fails (for example while offline), **Status & help** says why
+and it tries again five minutes later.
 
 Versions 0.5.5 to 0.5.9 checked through a signed-in GitHub CLI instead. If you run one
 of those without it, install the newest setup once by hand; later updates then arrive

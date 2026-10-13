@@ -4,6 +4,13 @@ Commands recorded below before October 10, 2026 use the old root-level script pa
 
 The virtual-display projection prototype and its evidence moved to the `prototype` branch on October 11, 2026. Entries below that mention prototype or projection checks record what was run at the time.
 
+## Faster update checks and the first automated release (1.0.2, October 13, 2026)
+
+1.0.2 checks for updates about a second after start instead of a minute, then every hour instead of every six,
+and tries a failed check again after five minutes (the network may not be up right after sign-in). It is also the
+first version that CI signs with the Key Vault release key and publishes by itself after the maintainer's approval;
+that run is recorded in the GitHub Actions history and the next entry, because this file ships inside it.
+
 ## Release-key signing in CI (after 1.0.1, October 13, 2026)
 
 From the next version, the approved windows-2022 release build signs the `.sha256` files with the Key Vault key

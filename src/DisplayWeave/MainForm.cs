@@ -82,7 +82,7 @@ namespace DisplayWeave
             // Administrator mode never updates: the setup would run elevated from a user-writable folder.
             if (installRoot != null && String.IsNullOrWhiteSpace(automaticExecutableFilter) && !ElevationRestart.IsElevated())
             {
-                updateTimer.Interval = 60000;
+                updateTimer.Interval = 1000; // the first tick checks right after start; UpdateTick then slows it to a minute
                 updateTimer.Tick += delegate { UpdateTick(); };
                 updateTimer.Start();
             }

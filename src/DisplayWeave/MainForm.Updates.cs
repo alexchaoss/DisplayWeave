@@ -5,7 +5,7 @@ using System.Windows.Forms;
 
 namespace DisplayWeave
 {
-    // Automatic updates: the six-hourly release check, installing a downloaded setup, telling the launcher this
+    // Automatic updates: the hourly release check, installing a downloaded setup, telling the launcher this
     // version runs, and going back to the previous version.
     public sealed partial class MainForm
     {
@@ -21,11 +21,12 @@ namespace DisplayWeave
         // An installed copy runs from versions\<version>\; the folder name is the version current.json names.
         private static string InstalledVersion { get { return Path.GetFileName(Path.GetDirectoryName(Application.ExecutablePath)); } }
 
-        // Checks the releases every six hours. A downloaded update installs by itself while this window is closed
-        // and no game is in its region through a Force fullscreen or Borderless in region rule, so it is never resized.
-        // Other windows fitted from outside stay where they are; the new version adopts them.
+        // Checks the releases right after start and then every hour. A downloaded update installs by itself while this
+        // window is closed and no game is in its region through a Force fullscreen or Borderless in region rule, so it is
+        // never resized. Other windows fitted from outside stay where they are; the new version adopts them.
         private void UpdateTick()
         {
+            if (updateTimer.Interval != 60000) updateTimer.Interval = 60000;
             if (updateSetup != null)
             {
                 if (!Visible && !fullscreen.HasExpandedApp) InstallUpdate();
@@ -33,7 +34,7 @@ namespace DisplayWeave
             }
             if (checkingForUpdate || DateTime.UtcNow < nextUpdateCheck) return;
             checkingForUpdate = true;
-            nextUpdateCheck = DateTime.UtcNow.AddHours(6);
+            nextUpdateCheck = DateTime.UtcNow.AddHours(1);
             string current = InstalledVersion;
             System.Collections.Generic.HashSet<string> failed = Updater.FailedVersions(installRoot);
             System.Threading.Thread worker = new System.Threading.Thread(delegate()
@@ -52,6 +53,8 @@ namespace DisplayWeave
         {
             checkingForUpdate = false;
             updateNotice = problem != null ? "Update check failed: " + problem : "";
+            // Right after sign-in the network may not be up yet, so a failed check is tried again sooner.
+            if (problem != null) nextUpdateCheck = DateTime.UtcNow.AddMinutes(5);
             if (setup == null) return;
             updateSetup = setup;
             updateVersion = version;
