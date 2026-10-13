@@ -93,7 +93,9 @@ try {
     $signatures = Write-ReleaseSignatures $folder
     gh release upload "v$Version" $signatures --repo $github
     if ($LASTEXITCODE -ne 0) { throw 'Uploading the signatures failed; the release stays a draft.' }
-    gh release edit "v$Version" --repo $github --draft=false
+    # A version without a suffix such as -preview is a full release and becomes the latest one.
+    $final = if ($Version.Contains('-')) { @() } else { @('--prerelease=false', '--latest') }
+    gh release edit "v$Version" --repo $github --draft=false @final
     if ($LASTEXITCODE -ne 0) { throw 'Publishing failed; the signed release is still a draft.' }
     Write-Output "Signed and published v$Version."
 }

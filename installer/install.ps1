@@ -230,7 +230,7 @@ function Read-CandidateVersion([string]$Directory) {
 
 # Public halves of the release signing keys, the same list as ReleaseKeys in src\DisplayWeave\Updater.cs.
 # scripts\sign-release.ps1 -NewKey or -PinKey adds a key to both.
-$releaseKeys = @('RUNTMSAAAAATu9pkeZZN3cVNNw4GOUxueHEixTzm9R7e7MN0k3itVRAOfmWB0wJJnw1R+TlDITlNIiV/J1hxl/u9rDcSzX0m')
+$releaseKeys = @('RUNTMSAAAAATu9pkeZZN3cVNNw4GOUxueHEixTzm9R7e7MN0k3itVRAOfmWB0wJJnw1R+TlDITlNIiV/J1hxl/u9rDcSzX0m', 'RUNTMSAAAABogT4jkDtu/qbfUCsR8ytE7STQ0FLahj7oxAj94s5KxTvK1V281m1RpTA09IOntRGyROecHzkhWVGtl2w/UZf0')
 
 # The release's .sha256 must carry a signature from a pinned key; it names the ZIP, and so its version.
 function Assert-ReleaseSignature([string]$ChecksumPath) {

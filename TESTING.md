@@ -4,6 +4,18 @@ Commands recorded below before October 10, 2026 use the old root-level script pa
 
 The virtual-display projection prototype and its evidence moved to the `prototype` branch on October 11, 2026. Entries below that mention prototype or projection checks record what was run at the time.
 
+## Second release key in Azure Key Vault (1.0.1, October 13, 2026)
+
+1.0.1 pins a second release key next to the maintainer's local one, so that CI can sign later versions; the app is
+otherwise 1.0.0. 1.0.1 itself is signed with the local key, because installed 1.0.0 copies trust only that one.
+
+- Key `release-signing` in Key Vault `displayweave-release` (Standard, East US, RBAC, 90-day soft delete): EC P-256,
+  operations sign and verify, not exportable. Pinned with `sign-release.ps1 -PinKey RUNTMSAAAABogT4jkDtu/qbfUCsR8ytE7STQ0FLahj7oxAj94s5KxTvK1V281m1RpTA09IOntRGyROecHzkhWVGtl2w/UZf0`.
+- Key Vault's ES256 signature (64 bytes, r then s) over the SHA-256 of a sample checksum line verified with
+  `ECDsaCng.VerifyData` and that public key, as `Updater.IsSignedRelease` does; the same signature failed for a
+  changed line.
+- `sign-release.ps1` now publishes a version without a suffix as a full, latest release.
+
 ## Code signing (1.0.0, October 13, 2026)
 
 1.0.0 is 0.6.0 plus Authenticode signing of the release build in CI (`67b5e37`); the app's code is unchanged.
