@@ -19,6 +19,10 @@ Whether the engines still flag it is checked on VirusTotal after the release.
 - The built setup and every `.exe`, `.dll` and `.ps1` in the ZIP contain none of `ExecutionPolicy Bypass`, `ping -n`,
   `127.0.0.1` or `del /f`, as ASCII or UTF-16.
 - Not run here: signing the two scripts, which only CI does; the release build checks their signatures.
+- Run 38414045797 on `26c7641` (added after the build): after approval every step passed, including signing both
+  scripts, and CI published v1.0.3 as the latest release. Downloaded to an empty folder and not run: both checksums
+  match and their `.sig` files verify with the Key Vault key; the nine binaries and both `.ps1` files in the ZIP are
+  validly signed and timestamped by `CN=Alexandre St-Pierre`; the embedded helper hashes match the signed helpers.
 
 ## Faster update checks and the first automated release (1.0.2, October 13, 2026)
 
