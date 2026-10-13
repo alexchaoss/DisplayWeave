@@ -47,7 +47,7 @@ Test-Setup 'Quiet install creates a versioned installation and an uninstaller co
     Assert-Setup ($pointer.version -ceq $version) "Installed version is $($pointer.version)."
     Assert-Setup ([IO.File]::Exists((Join-Path $root "versions\$version\DisplayWeave.exe"))) 'DisplayWeave.exe was not installed.'
     Assert-Setup ([IO.File]::Exists((Join-Path $root 'Uninstall DisplayWeave.exe'))) 'The uninstaller copy is missing.'
-    Assert-Setup ([IO.File]::Exists((Join-Path $root 'Launch-DisplayWeave.ps1'))) 'The launcher is missing.'
+    Assert-Setup ([IO.File]::Exists((Join-Path $root 'DisplayWeave.Launcher.exe'))) 'The launcher is missing.'
 }
 
 Test-Setup 'Running the same setup again is accepted' {

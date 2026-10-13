@@ -57,25 +57,19 @@ namespace DisplayWeave
                 if (!String.IsNullOrEmpty(root))
                 {
                     string versions = Path.Combine(root, "versions") + Path.DirectorySeparatorChar;
-                    string candidate = Path.Combine(root, "Launch-DisplayWeave.ps1");
+                    string candidate = Path.Combine(root, "DisplayWeave.Launcher.exe");
                     if (fullExecutable.StartsWith(versions, StringComparison.OrdinalIgnoreCase) && fileExists(candidate))
                         launcher = candidate;
                 }
             }
+            // The launcher reads the data directory from current.json beside it, so the startup command
+            // only passes --minimized. It is a signed program, not powershell.exe running a script.
             string command = launcher != null ?
-                QuoteArgument(SystemPowerShellPath()) + " -NoProfile -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File " + QuoteArgument(launcher) + " -Minimized" :
+                QuoteArgument(launcher) + " --minimized" :
                 QuoteArgument(fullExecutable) + " --minimized --data-dir " + QuoteArgument(fullData);
             if (!IsUsableCommand(command))
                 throw new ArgumentException("The Windows startup command exceeds the 260-character limit. Move DisplayWeave to a shorter path before enabling startup.");
             return command;
-        }
-
-        private static string SystemPowerShellPath()
-        {
-            string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-            if (String.IsNullOrWhiteSpace(windows))
-                throw new InvalidOperationException("The Windows system directory could not be determined.");
-            return Path.Combine(windows, @"System32\WindowsPowerShell\v1.0\powershell.exe");
         }
 
         private static string NormalizePath(string path, string parameter)

@@ -95,12 +95,12 @@ function Write-LauncherShortcut([string]$Path, [string]$LauncherPath, [string]$I
     try {
         $shell = New-Object -ComObject WScript.Shell
         $shortcut = $shell.CreateShortcut($temporary)
-        $shortcut.TargetPath = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        $shortcut.Arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File "' + $LauncherPath + '"'
+        $shortcut.TargetPath = $LauncherPath
+        $shortcut.Arguments = ''
         $shortcut.WorkingDirectory = [IO.Path]::GetDirectoryName($LauncherPath)
         $shortcut.Description = 'Open DisplayWeave settings'
         $shortcut.IconLocation = $IconPath + ',0'
-        $shortcut.WindowStyle = 7
+        $shortcut.WindowStyle = 1
         $shortcut.Save()
         Write-AtomicBytes $Path ([IO.File]::ReadAllBytes($temporary))
     }
@@ -219,8 +219,8 @@ function Read-CandidateVersion([string]$Directory) {
         $manifest.version -isnot [string] -or $manifest.version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z.-]+)?$') {
         throw 'Release manifest must contain a valid version such as 0.4.0-preview.'
     }
-    foreach ($required in @('DisplayWeave.exe', 'DisplayWeave.Core.dll', 'native-v2-x64\RegionHookHost.exe', 'native-v2-x64\RegionHook.dll',
-        'native-v2-x86\RegionHookHost.exe', 'native-v2-x86\RegionHook.dll')) {
+    foreach ($required in @('DisplayWeave.exe', 'DisplayWeave.Core.dll', 'DisplayWeave.Launcher.exe', 'native-v2-x64\RegionHookHost.exe',
+        'native-v2-x64\RegionHook.dll', 'native-v2-x86\RegionHookHost.exe', 'native-v2-x86\RegionHook.dll')) {
         $file = Join-Path $Directory $required
         Assert-PlainPath $file $false
         if (-not [IO.File]::Exists($file) -or (Get-Item -LiteralPath $file).Length -eq 0) { throw "Release is missing a required nonempty file: $required" }
@@ -335,7 +335,7 @@ if ($Uninstall) {
     # -RemoveSettings. Files still loaded by other apps are deleted at the next sign-in.
     $pointerPath = Join-Path $root 'current.json'
     $versionsDirectory = Join-Path $root 'versions'
-    $launcherPath = Join-Path $root 'Launch-DisplayWeave.ps1'
+    $launcherPath = Join-Path $root 'DisplayWeave.Launcher.exe'
     if (-not [IO.File]::Exists($pointerPath) -and -not [IO.Directory]::Exists($versionsDirectory)) {
         throw "No DisplayWeave installation was found in $root. Nothing was removed."
     }
@@ -432,9 +432,10 @@ $utf8 = New-Object Text.UTF8Encoding($false)
 try {
     $startupCommand = $null
     if ($Startup -eq 'Enable') {
-        $powershell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        $startupLauncher = Join-Path $root 'Launch-DisplayWeave.ps1'
-        $startupCommand = '"' + $powershell + '" -NoProfile -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File "' + $startupLauncher + '" -Minimized'
+        # The launcher reads the data directory from current.json beside it; the command is just the exe
+        # and --minimized, matching StartupRegistration.BuildCommand so the app and installer agree.
+        $startupLauncher = Join-Path $root 'DisplayWeave.Launcher.exe'
+        $startupCommand = '"' + $startupLauncher + '" --minimized'
         if ($startupCommand.Length -gt 260) { throw 'Windows Run startup commands are limited to 260 characters. Choose a shorter -InstallRoot or use -Startup Preserve.' }
     }
     if (-not [string]::IsNullOrWhiteSpace($Version) -and $Version -notmatch '^v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z.-]+)?$') {
@@ -468,7 +469,7 @@ try {
     $versionsDirectory = Join-Path $root 'versions'
     $dataDirectory = Join-Path $root 'data'
     $pointerPath = Join-Path $root 'current.json'
-    $launcherPath = Join-Path $root 'Launch-DisplayWeave.ps1'
+    $launcherPath = Join-Path $root 'DisplayWeave.Launcher.exe'
     foreach ($file in @($pointerPath, $launcherPath)) { Assert-PlainPath $file $false }
     if ([IO.File]::Exists($pointerPath)) { $oldPointer = [IO.File]::ReadAllBytes($pointerPath) }
     if ([IO.File]::Exists($launcherPath)) { $oldLauncher = [IO.File]::ReadAllBytes($launcherPath) }
@@ -522,8 +523,8 @@ try {
             }
         }
     }
-    # The package ships the launcher signed; versions before 1.0.3 generated it here instead.
-    $packagedLauncher = Join-Path $versionDirectory 'Launch-DisplayWeave.ps1'
+    # The package ships the signed launcher executable; the installer copies it to the stable root path.
+    $packagedLauncher = Join-Path $versionDirectory 'DisplayWeave.Launcher.exe'
     if (-not [IO.File]::Exists($packagedLauncher)) { throw "DisplayWeave $candidateVersion has no packaged launcher. Install it with its own setup." }
     Write-AtomicBytes $launcherPath ([IO.File]::ReadAllBytes($packagedLauncher))
     $launcherChanged = $true
@@ -587,9 +588,7 @@ try {
 
     $unrelatedRunning = @($running | Where-Object { -not $_.Owned -and -not $_.Process.HasExited }).Count -gt 0
     if (-not $NoLaunch -and -not $unrelatedRunning) {
-        $powershell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        $arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File "' + $launcherPath + '"'
-        $launch = Start-Process -FilePath $powershell -ArgumentList $arguments -WindowStyle Hidden -PassThru
+        $launch = Start-Process -FilePath $launcherPath -WindowStyle Hidden -PassThru
         try {
             if (-not $launch.WaitForExit(10000)) { throw 'The stable launcher did not finish starting DisplayWeave.' }
             if ($launch.ExitCode -ne 0) { throw 'The stable launcher could not start DisplayWeave.' }

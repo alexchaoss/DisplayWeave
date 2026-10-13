@@ -82,8 +82,8 @@ namespace DisplayWeave
                 string inspected = null;
                 string command = StartupRegistration.BuildCommand(@"C:\Apps\DisplayWeave\versions\0.4\DisplayWeave.exe", @"C:\Apps\DisplayWeave\data\",
                     delegate(string candidate) { inspected = candidate; return true; });
-                Assert(inspected == @"C:\Apps\DisplayWeave\Launch-DisplayWeave.ps1", "Wrong launcher checked.");
-                Assert(command == PowerShellPrefix() + " -NoProfile -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File \"C:\\Apps\\DisplayWeave\\Launch-DisplayWeave.ps1\" -Minimized", "Unstable installed command.");
+                Assert(inspected == @"C:\Apps\DisplayWeave\DisplayWeave.Launcher.exe", "Wrong launcher checked.");
+                Assert(command == "\"C:\\Apps\\DisplayWeave\\DisplayWeave.Launcher.exe\" --minimized", "Unstable installed command.");
             });
             test("Missing launcher falls back to the current portable command", delegate
             {
@@ -100,7 +100,7 @@ namespace DisplayWeave
             test("Installed path comparison follows Windows casing and normalizes parent segments", delegate
             {
                 string command = StartupRegistration.BuildCommand(@"c:\APP\versions\temp\..\v2\DisplayWeave.exe", @"C:\App\DATA", delegate { return true; });
-                Assert(command.StartsWith(PowerShellPrefix() + " -NoProfile ", StringComparison.Ordinal), "Path normalization lost installation membership.");
+                Assert(command.EndsWith("\\DisplayWeave.Launcher.exe\" --minimized", StringComparison.OrdinalIgnoreCase), "Path normalization lost installation membership.");
             });
             test("Windows argument quoting handles spaces embedded quotes and trailing slashes", delegate
             {
@@ -368,12 +368,6 @@ namespace DisplayWeave
         private static void Assert(bool condition, string message)
         {
             if (!condition) throw new InvalidOperationException(message);
-        }
-
-        private static string PowerShellPrefix()
-        {
-            return "\"" + Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),
-                @"System32\WindowsPowerShell\v1.0\powershell.exe") + "\"";
         }
 
         private static void Reject(Action action)

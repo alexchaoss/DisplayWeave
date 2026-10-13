@@ -29,6 +29,7 @@ $NativeDirectory = [IO.Path]::GetFullPath($NativeDirectory)
 $files = @(
     @{ Source = $ManagedExecutable; Destination = 'DisplayWeave.exe' },
     @{ Source = (Join-Path (Split-Path -Parent $ManagedExecutable) 'DisplayWeave.Core.dll'); Destination = 'DisplayWeave.Core.dll' },
+    @{ Source = (Join-Path (Split-Path -Parent $ManagedExecutable) 'DisplayWeave.Launcher.exe'); Destination = 'DisplayWeave.Launcher.exe' },
     @{ Source = (Join-Path $NativeDirectory 'MinHook-LICENSE.txt'); Destination = 'MinHook-LICENSE.txt' }
 )
 foreach ($architecture in @('x64', 'x86')) {
@@ -37,7 +38,7 @@ foreach ($architecture in @('x64', 'x86')) {
         $files += @{ Source = (Join-Path $NativeDirectory $relativePath); Destination = $relativePath }
     }
 }
-foreach ($document in @('LICENSE', 'README.md', 'docs\testing.md', 'installer\install.ps1', 'installer\Launch-DisplayWeave.ps1', 'src\DisplayWeave\release.json')) {
+foreach ($document in @('LICENSE', 'README.md', 'docs\testing.md', 'installer\install.ps1', 'src\DisplayWeave\release.json')) {
     $files += @{ Source = (Join-Path $repository $document); Destination = (Split-Path -Leaf $document) }
 }
 foreach ($file in $files) {

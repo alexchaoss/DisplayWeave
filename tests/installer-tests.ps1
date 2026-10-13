@@ -6,7 +6,11 @@ param([string]$OutputDirectory)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression
 $installer = Join-Path (Split-Path -Parent $PSScriptRoot) 'installer\install.ps1'
-$launcher = Join-Path (Split-Path -Parent $PSScriptRoot) 'installer\Launch-DisplayWeave.ps1'
+# The launcher is a built binary; run build.ps1 first. Fixtures embed the real executable so the
+# go-back test can run it, and the install can copy a runnable launcher to the install root.
+$launcher = Join-Path (Split-Path -Parent $PSScriptRoot) 'dist\DisplayWeave.Launcher.exe'
+if (-not [IO.File]::Exists($launcher)) { throw "The launcher was not found at $launcher. Build the application first (scripts\build.ps1)." }
+$launcherBytes = [IO.File]::ReadAllBytes($launcher)
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = Join-Path (Split-Path -Parent $PSScriptRoot) 'test-results' }
 $testRoot = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) ('installer-' + [DateTime]::Now.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 [void][IO.Directory]::CreateDirectory($testRoot)
@@ -30,7 +34,7 @@ function New-Fixture([string]$Name, [string]$Version, [object[]]$Extra = @(), [s
     $archive = New-Object IO.Compression.ZipArchive($stream, [IO.Compression.ZipArchiveMode]::Create, $true)
     try {
         $items = @([pscustomobject]@{ Name = 'release.json'; Content = ('{"version":"' + $Version + '"}'); Attributes = 0 })
-        if ($Omit -ne 'Launch-DisplayWeave.ps1') { $items += [pscustomobject]@{ Name = 'Launch-DisplayWeave.ps1'; Content = [IO.File]::ReadAllText($launcher); Attributes = 0 } }
+        if ($Omit -ne 'DisplayWeave.Launcher.exe') { $items += [pscustomobject]@{ Name = 'DisplayWeave.Launcher.exe'; Bytes = $launcherBytes; Attributes = 0 } }
         foreach ($file in @('DisplayWeave.exe', 'DisplayWeave.Core.dll', 'native-v2-x64/RegionHookHost.exe', 'native-v2-x64/RegionHook.dll',
             'native-v2-x86/RegionHookHost.exe', 'native-v2-x86/RegionHook.dll')) {
             if ($file -ne $Omit) { $items += [pscustomobject]@{ Name = $file; Content = 'Non-executable installer test fixture'; Attributes = 0 } }
@@ -40,7 +44,7 @@ function New-Fixture([string]$Name, [string]$Version, [object[]]$Extra = @(), [s
             $entry = $archive.CreateEntry($item.Name)
             $entry.ExternalAttributes = $item.Attributes
             $output = $entry.Open()
-            try { $bytes = $utf8.GetBytes($item.Content); $output.Write($bytes, 0, $bytes.Length) }
+            try { $bytes = if ($item.PSObject.Properties['Bytes']) { $item.Bytes } else { $utf8.GetBytes($item.Content) }; $output.Write($bytes, 0, $bytes.Length) }
             finally { $output.Dispose() }
         }
     }
@@ -90,9 +94,8 @@ Test-Installer 'First installation creates a stable pointer and migrates only mi
     Assert-Installer ([IO.File]::ReadAllText((Join-Path $installation 'data\layout.xml')) -eq '<layout>migrated</layout>') 'Layout was not migrated.'
     Assert-Installer ([IO.File]::ReadAllText((Join-Path $installation 'data\rules.xml')) -eq '<rules>migrated</rules>') 'Rules were not migrated.'
     Assert-Installer ([IO.File]::Exists((Join-Path $installation 'DisplayWeave.lnk'))) 'Install-root shortcut is missing.'
-    $errors = $null; $tokens = $null
-    [void][Management.Automation.Language.Parser]::ParseFile((Join-Path $installation 'Launch-DisplayWeave.ps1'), [ref]$tokens, [ref]$errors)
-    Assert-Installer ($errors.Count -eq 0) 'Installed launcher has PowerShell syntax errors.'
+    $installedLauncher = Join-Path $installation 'DisplayWeave.Launcher.exe'
+    Assert-Installer ([IO.File]::Exists($installedLauncher) -and ([IO.File]::ReadAllBytes($installedLauncher).Length -eq $launcherBytes.Length)) 'Installed launcher is missing or not the packaged executable.'
 }
 
 Test-Installer 'Update retains old version and existing user settings' {
@@ -116,14 +119,14 @@ Test-Installer 'The launcher goes back to the replaced version after two failed 
     $health = Join-Path $installation 'health'
     [void][IO.Directory]::CreateDirectory($health)
     [IO.File]::WriteAllText((Join-Path $health '0.4.1-preview.starts'), "1`r`n2`r`n", $utf8)
-    # The fixture's programs are not executable, so each launch fails after its bookkeeping and nothing starts.
-    $powershell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $arguments = '-NoProfile -ExecutionPolicy RemoteSigned -File "' + (Join-Path $installation 'Launch-DisplayWeave.ps1') + '"'
+    # The fixture's DisplayWeave.exe is not a real program, so the launcher does its bookkeeping and then
+    # fails to start it; the go-back decision is made before the start attempt.
+    $launcherExe = Join-Path $installation 'DisplayWeave.Launcher.exe'
     [IO.File]::WriteAllText((Join-Path $health '0.4.1-preview.ok'), '', $utf8)
-    Start-Process -FilePath $powershell -ArgumentList $arguments -WindowStyle Hidden -Wait
+    Start-Process -FilePath $launcherExe -WindowStyle Hidden -Wait
     Assert-Installer ([IO.File]::ReadAllText($pointerPath) -eq $before) 'A version that ran cleanly was given up.'
     [IO.File]::Delete((Join-Path $health '0.4.1-preview.ok'))
-    Start-Process -FilePath $powershell -ArgumentList $arguments -WindowStyle Hidden -Wait
+    Start-Process -FilePath $launcherExe -WindowStyle Hidden -Wait
     $after = [IO.File]::ReadAllText($pointerPath) | ConvertFrom-Json
     Assert-Installer ($after.version -eq '0.4.0-preview' -and [IO.File]::Exists((Join-Path $health '0.4.1-preview.failed'))) 'The launcher did not go back after two failed starts.'
     Invoke-Fixture $second $installation
@@ -151,7 +154,7 @@ Test-Installer 'Checksum is mandatory for a local package' {
 }
 
 Test-Installer 'A package without the launcher is rejected' {
-    $fixture = New-Fixture 'no-launcher' '0.4.2-preview' @() 'Launch-DisplayWeave.ps1'
+    $fixture = New-Fixture 'no-launcher' '0.4.2-preview' @() 'DisplayWeave.Launcher.exe'
     $target = Join-Path $testRoot 'no-launcher-install'
     Assert-Rejected { Invoke-Fixture $fixture $target }
     Assert-Installer (-not [IO.File]::Exists((Join-Path $target 'current.json'))) 'A package without a launcher was made current.'
@@ -196,9 +199,9 @@ Test-Installer 'Requested version must agree with the release manifest' {
 
 Test-Installer 'Failed pointer replacement restores the previous launcher and pointer' {
     $pointerPath = Join-Path $installation 'current.json'
-    $launcherPath = Join-Path $installation 'Launch-DisplayWeave.ps1'
+    $launcherPath = Join-Path $installation 'DisplayWeave.Launcher.exe'
     $before = [IO.File]::ReadAllText($pointerPath)
-    $originalLauncher = '# Existing launcher content must survive rollback.'
+    $originalLauncher = 'Existing launcher content must survive rollback.'
     [IO.File]::WriteAllText($launcherPath, $originalLauncher, $utf8)
     $fixture = New-Fixture 'rollback' '0.4.2-preview'
     # Deny delete/write sharing specifically on the pointer, after permitting
@@ -212,7 +215,7 @@ Test-Installer 'Failed pointer replacement restores the previous launcher and po
 
 Test-Installer 'Uninstall removes program files and keeps settings' {
     & $installer -Uninstall -InstallRoot $installation | Out-Null
-    foreach ($removed in @('current.json', 'Launch-DisplayWeave.ps1', 'DisplayWeave.lnk', 'versions', 'health', '.install.lock')) {
+    foreach ($removed in @('current.json', 'DisplayWeave.Launcher.exe', 'DisplayWeave.lnk', 'versions', 'health', '.install.lock')) {
         Assert-Installer (-not (Test-Path -LiteralPath (Join-Path $installation $removed))) "Uninstall left $removed."
     }
     Assert-Installer ([IO.File]::ReadAllText((Join-Path $installation 'data\layout.xml')) -eq '<layout>user edit</layout>') 'Uninstall removed settings without -RemoveSettings.'

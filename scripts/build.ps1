@@ -29,3 +29,24 @@ $sources = @(@($sourceDirectory, (Join-Path $sourceDirectory 'Tests')) | ForEach
 & $compiler /nologo /target:winexe /platform:x64 /optimize+ /warn:4 "/reference:$core" /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Xml.dll "/win32manifest:$sourceDirectory\app.manifest" "/win32icon:$sourceDirectory\app.ico" "/resource:$sourceDirectory\version.txt,DisplayWeave.version.txt" "/resource:$helperList,DisplayWeave.helpers.sha256" "/out:$outputDirectory\DisplayWeave.exe" $sources
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
 Write-Output "Built $outputDirectory\DisplayWeave.exe and DisplayWeave.Core.dll"
+
+# Native launcher: a small signed program the installer copies to the install root, so the Start menu
+# shortcut and the sign-in entry start it instead of powershell.exe running a script.
+$version = (Get-Content -LiteralPath (Join-Path $sourceDirectory 'version.txt') -Raw).Trim()
+$numeric = @(($version -split '[-+]')[0] -split '\.') + @('0', '0', '0', '0')
+$assemblyVersion = ($numeric[0..3]) -join '.'
+$launcherInfo = Join-Path $outputDirectory 'launcher-assemblyinfo.cs'
+Set-Content -LiteralPath $launcherInfo -Encoding utf8 -Value @"
+using System.Reflection;
+[assembly: AssemblyTitle("DisplayWeave Launcher")]
+[assembly: AssemblyProduct("DisplayWeave")]
+[assembly: AssemblyCompany("Alexandre St-Pierre")]
+[assembly: AssemblyCopyright("Copyright (C) Alexandre St-Pierre")]
+[assembly: AssemblyFileVersion("$assemblyVersion")]
+[assembly: AssemblyInformationalVersion("$version")]
+[assembly: AssemblyVersion("$assemblyVersion")]
+"@
+& $compiler /nologo /target:winexe /platform:x64 /optimize+ /warn:4 "/win32manifest:$sourceDirectory\app.manifest" "/win32icon:$sourceDirectory\app.ico" "/out:$outputDirectory\DisplayWeave.Launcher.exe" (Join-Path $projectDirectory 'installer\launcher\Launcher.cs') $launcherInfo
+if ($LASTEXITCODE -ne 0) { throw 'Launcher build failed.' }
+Remove-Item -LiteralPath $launcherInfo -Force
+Write-Output "Built $outputDirectory\DisplayWeave.Launcher.exe"
