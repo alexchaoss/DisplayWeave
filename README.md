@@ -50,6 +50,10 @@ Versions 0.5.5 to 0.5.9 checked through a signed-in GitHub CLI instead. If you r
 of those without it, install the newest setup once by hand; later updates then arrive
 by themselves.
 
+From 1.0.2, releases are signed with a release key that versions before 1.0.1 do not
+know, so those copies report that the update is not signed. Install the newest setup
+once by hand; later updates then arrive by themselves.
+
 A newer release's setup is downloaded with its SHA-256 file and that file's signature.
 DisplayWeave installs it only when the signature comes from a DisplayWeave release key
 and the setup matches the checksum. The signing key is kept off GitHub, so someone who

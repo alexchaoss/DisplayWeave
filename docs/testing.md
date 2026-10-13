@@ -11,6 +11,14 @@ and tries a failed check again after five minutes (the network may not be up rig
 first version that CI signs with the Key Vault release key and publishes by itself after the maintainer's approval;
 that run is recorded in the GitHub Actions history and the next entry, because this file ships inside it.
 
+- Run 38408311901 on `01fb366` (added after the build): after the maintainer's approval, every step passed, including
+  the Key Vault sign-in and checksum signing and the `publish` job, which published v1.0.2 as the latest full release.
+  The published files, downloaded to an empty folder and not run: both `.sha256` files match; both `.sig` files verify
+  with the Key Vault key from `Updater.ReleaseKeys`; all nine binaries are validly signed and timestamped by
+  `CN=Alexandre St-Pierre`; the embedded helper hashes match the six signed helpers; the ZIP holds `testing.md`.
+- Copies older than 1.0.1 pin only the local key, so they refuse 1.0.2 and, picking the newest release, do not fall
+  back to 1.0.1; they need the newest setup installed by hand once (README). The maintainer's installed 0.6.0 is one.
+
 ## Release-key signing in CI (after 1.0.1, October 13, 2026)
 
 From the next version, the approved windows-2022 release build signs the `.sha256` files with the Key Vault key
