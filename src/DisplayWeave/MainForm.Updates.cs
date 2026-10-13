@@ -82,8 +82,10 @@ namespace DisplayWeave
                         nextUpdateCheck = DateTime.UtcNow;
                         return;
                     }
-                    // The setup closes this instance with --exit-for-update, installs, then starts the new version.
-                    using (Process.Start(new ProcessStartInfo(setup, "--quiet --install-root \"" + installRoot + "\" --log \"" + setup + ".log\"") { UseShellExecute = false })) { }
+                    // The Inno setup closes this instance (--exit-for-update), installs into the same root, then
+                    // relaunches the new version. /VERYSILENT keeps it windowless; /NORESTART leaves Windows alone.
+                    using (Process.Start(new ProcessStartInfo(setup,
+                        "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=\"" + installRoot + "\" /LOG=\"" + setup + ".log\"") { UseShellExecute = false })) { }
                 }
             }
             catch (System.ComponentModel.Win32Exception ex) { updateNotice = "Could not start the DisplayWeave " + updateVersion + " setup: " + ex.Message; }

@@ -1,6 +1,6 @@
 # Signs a DisplayWeave release with a release key: the maintainer's key in this Windows account, or with
 # -KeyVault the key in Azure Key Vault that CI may use once the maintainer approves a release build.
-# Neither private key can be exported. Installed copies and install.ps1 refuse a release without it.
+# Neither private key can be exported. Installed copies refuse an update without it.
 #   -NewKey                         create the key in this Windows account (it cannot be exported) and pin it
 #   -PinKey <base64>                pin another public key, such as a backup key made on another computer
 #   -Version <v>                    check the CI-built draft release v<v>, sign it and publish it
@@ -13,8 +13,7 @@ $github = 'alexchaoss/DisplayWeave'
 $keyName = 'DisplayWeave release signing'
 # Where the public keys are pinned, as a C# string array and a PowerShell array.
 $pins = @(
-    @{ File = 'src\DisplayWeave\Updater.cs'; Pattern = '(?<=ReleaseKeys = \{)[^}]*(?=\};)'; Quote = '"'; Pad = ' ' },
-    @{ File = 'installer\install.ps1'; Pattern = '(?<=\$releaseKeys = @\()[^)]*(?=\))'; Quote = "'"; Pad = '' }
+    @{ File = 'src\DisplayWeave\Updater.cs'; Pattern = '(?<=ReleaseKeys = \{)[^}]*(?=\};)'; Quote = '"'; Pad = ' ' }
 )
 
 function Get-PinnedKeys([hashtable]$Pin) {

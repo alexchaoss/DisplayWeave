@@ -33,7 +33,7 @@ foreach ($architecture in @('x64', 'x86')) {
 Write-Output 'Managed and native checks passed.'
 
 & (Join-Path $PSScriptRoot 'package.ps1') -NativeDirectory $native
-foreach ($suite in @('installer-tests.ps1', 'setup-tests.ps1')) {
+foreach ($suite in @('setup-tests.ps1')) {
     if ($suite -eq 'setup-tests.ps1') { & (Join-Path $PSScriptRoot 'build-setup.ps1') }
     $output = & (Join-Path $repository "tests\$suite") 2>$null
     if ($LASTEXITCODE -ne 0) { $output | Write-Output; throw "$suite failed." }

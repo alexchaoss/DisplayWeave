@@ -113,18 +113,6 @@ jobs:
             ${{ github.workspace }}\dist\DisplayWeave.Core.dll
             ${{ github.workspace }}\dist\DisplayWeave.Launcher.exe
 
-      # Before packaging: the ZIP ships install.ps1 and the setup embeds it. A signed script can run
-      # with -ExecutionPolicy RemoteSigned and under App Control policies such as Smart App Control.
-      - name: Sign the installer script
-        if: env.SIGN == 'true'
-        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
-        with:
-          endpoint: https://eus.codesigning.azure.net/
-          signing-account-name: displayweave
-          certificate-profile-name: displayweave-public
-          files: |
-            ${{ github.workspace }}\installer\install.ps1
-
       # These test modes do not open application windows, inject hooks, or change
       # the desktop. Monitor/window rendering tests require an interactive desktop.
       - name: Run managed and native policy tests
@@ -162,35 +150,29 @@ jobs:
             $problems.Add("Expected at least 108 passing managed tests; found $passed.")
           }
 
+          # The host is a GUI-subsystem program, so run it with redirected output and read its exit code from
+          # the process, not from the call operator's $LASTEXITCODE, which does not apply to GUI processes.
           foreach ($architecture in @('x64', 'x86')) {
             $helper = Join-Path $env:GITHUB_WORKSPACE "dist\native-v2-$architecture\RegionHookHost.exe"
             $policyReport = Join-Path $reportDirectory "$architecture-policy.txt"
-            & $helper --self-test-policy 2>&1 | Tee-Object -FilePath $policyReport
-            if ($LASTEXITCODE -ne 0) {
-              $problems.Add("$architecture shell policy tests exited with code $LASTEXITCODE.")
+            $policyRun = Start-Process -FilePath $helper -ArgumentList '--self-test-policy' -NoNewWindow -Wait -PassThru -RedirectStandardOutput $policyReport
+            if ($policyRun.ExitCode -ne 0) {
+              $problems.Add("$architecture shell policy tests exited with code $($policyRun.ExitCode).")
             }
+            Get-Content -LiteralPath $policyReport | Write-Output
             $policySummary = [regex]::Match((Get-Content -LiteralPath $policyReport -Raw), '^PASS shell and resident-hook policy: (\d+) deterministic cases;')
             if (!$policySummary.Success -or [int]$policySummary.Groups[1].Value -lt 223) {
               $problems.Add("$architecture shell policy tests did not report success.")
             }
-            & $helper --self-test-ipc 2>&1 | Tee-Object -FilePath (Join-Path $reportDirectory "$architecture-ipc.txt")
-            if ($LASTEXITCODE -ne 0) { $problems.Add("$architecture IPC security tests failed.") }
+            $ipcRun = Start-Process -FilePath $helper -ArgumentList '--self-test-ipc' -NoNewWindow -Wait -PassThru -RedirectStandardOutput (Join-Path $reportDirectory "$architecture-ipc.txt")
+            if ($ipcRun.ExitCode -ne 0) { $problems.Add("$architecture IPC security tests failed.") }
           }
           if ($problems.Count -gt 0) { throw ($problems -join [Environment]::NewLine) }
 
       - name: Package the portable application
         run: ./scripts/package.ps1
 
-      - name: Run isolated installer regression tests
-        timeout-minutes: 5
-        run: ./tests/installer-tests.ps1 -OutputDirectory test-results/ci
-
-      # Users and the setup run install.ps1 in Windows PowerShell 5.1; the step above uses PowerShell 7.
-      - name: Run the installer regression tests in Windows PowerShell 5.1
-        timeout-minutes: 5
-        shell: powershell
-        run: ./tests/installer-tests.ps1 -OutputDirectory test-results/ci/powershell-5.1
-
+      # Compiles the setup with the runner's preinstalled Inno Setup (build-setup.ps1 finds ISCC.exe).
       - name: Build the setup
         timeout-minutes: 5
         run: ./scripts/build-setup.ps1
@@ -212,8 +194,7 @@ jobs:
           $setup = Get-Item release/DisplayWeave-Setup-*.exe
           $hash = (Get-FileHash -LiteralPath $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           [IO.File]::WriteAllText($setup.FullName + '.sha256', $hash + '  ' + $setup.Name + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
-          $scripts = @(Get-Item installer/install.ps1)
-          $unsigned = @(@(Get-ChildItem dist -Recurse -Include *.exe, *.dll) + $scripts + $setup | Where-Object { (Get-AuthenticodeSignature -LiteralPath $_.FullName).Status -ne 'Valid' })
+          $unsigned = @(@(Get-ChildItem dist -Recurse -Include *.exe, *.dll) + $setup | Where-Object { (Get-AuthenticodeSignature -LiteralPath $_.FullName).Status -ne 'Valid' })
           if ($unsigned.Count -gt 0) { throw "Not signed: $($unsigned.FullName -join ', ')" }
 
       # Quiet-mode setup runs against a temporary install root; nothing is launched or registered.

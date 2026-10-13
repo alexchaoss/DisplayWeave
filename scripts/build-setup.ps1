@@ -1,6 +1,5 @@
-# Builds release\DisplayWeave-Setup-<version>.exe from the portable package made by
-# package.ps1. The setup embeds that ZIP, its .sha256 and installer\install.ps1;
-# run package.ps1 first. The result is unsigned.
+# Builds release\DisplayWeave-Setup-<version>.exe with Inno Setup from the portable package made by
+# package.ps1 (run package.ps1 first). The payload is baked into the setup; the result is unsigned.
 param([string]$PackagePath)
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
@@ -14,14 +13,29 @@ foreach ($file in @($PackagePath, $checksumPath)) { if (-not (Test-Path -Literal
 $expected = ((Get-Content -LiteralPath $checksumPath -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
 if ((Get-FileHash -LiteralPath $PackagePath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'The package does not match its .sha256 file.' }
 
-$compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-if (-not (Test-Path -LiteralPath $compiler)) { throw 'The Windows .NET Framework C# compiler was not found.' }
-$setupSource = Join-Path $repository 'installer\setup'
-$output = Join-Path (Split-Path -Parent $PackagePath) "DisplayWeave-Setup-$version.exe"
-& $compiler /nologo /target:winexe /optimize+ /warn:4 /warnaserror+ /reference:System.Windows.Forms.dll /reference:System.Drawing.dll `
-    "/win32manifest:$setupSource\setup.manifest" "/win32icon:$(Join-Path $repository 'src\DisplayWeave\app.ico')" "/resource:$PackagePath,$packageName" "/resource:$checksumPath,$packageName.sha256" `
-    "/resource:$(Join-Path $repository 'installer\install.ps1'),install.ps1" "/out:$output" (Join-Path $setupSource 'Setup.cs')
-if ($LASTEXITCODE -ne 0) { throw 'Setup build failed.' }
+# Find the Inno Setup command-line compiler (local install or the GitHub runner's preinstalled copy).
+$iscc = $env:ISCC
+if ([string]::IsNullOrWhiteSpace($iscc) -or -not (Test-Path -LiteralPath $iscc)) {
+    $iscc = @('C:\Program Files\Inno Setup 7\ISCC.exe', 'C:\Program Files (x86)\Inno Setup 7\ISCC.exe',
+        'C:\Program Files\Inno Setup 6\ISCC.exe', 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe') |
+        Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+}
+if ([string]::IsNullOrWhiteSpace($iscc)) { throw 'Inno Setup (ISCC.exe) was not found. Install Inno Setup 6 or 7, or set $env:ISCC.' }
+
+$outputDirectory = Split-Path -Parent $PackagePath
+$script = Join-Path $repository 'installer\DisplayWeave.iss'
+$payloadDirectory = Join-Path ([IO.Path]::GetTempPath()) ('DisplayWeave-setup-' + [Guid]::NewGuid().ToString('N'))
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+try {
+    [IO.Compression.ZipFile]::ExtractToDirectory($PackagePath, $payloadDirectory)
+    & $iscc /Qp "/DAppVersion=$version" "/DPayloadDir=$payloadDirectory" "/DOutputDir=$outputDirectory" $script
+    if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed.' }
+}
+finally {
+    if (Test-Path -LiteralPath $payloadDirectory) { Remove-Item -LiteralPath $payloadDirectory -Recurse -Force }
+}
+$output = Join-Path $outputDirectory "DisplayWeave-Setup-$version.exe"
+if (-not (Test-Path -LiteralPath $output -PathType Leaf)) { throw "Inno Setup did not produce $output." }
 $hash = (Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText($output + '.sha256', $hash + '  ' + [IO.Path]::GetFileName($output) + [Environment]::NewLine, (New-Object Text.UTF8Encoding($false)))
 Write-Output "Setup: $output"

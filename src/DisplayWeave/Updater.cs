@@ -16,7 +16,7 @@ namespace DisplayWeave
         private const string Repository = "alexchaoss/DisplayWeave";
         private static readonly Regex ReleaseVersion = new Regex(@"^(\d{1,9})\.(\d{1,9})\.(\d{1,9})(-[0-9A-Za-z.-]+)?$");
         // Public halves (CNG ECCPUBLICBLOB, base64) of the ECDSA P-256 keys that sign each release's setup
-        // checksum; scripts\sign-release.ps1 -NewKey creates one and pins it here and in install.ps1. The
+        // checksum; scripts\sign-release.ps1 -NewKey creates one and pins it here. The
         // private halves never reach GitHub, so a compromised repository or release cannot ship an update.
         internal static readonly string[] ReleaseKeys = { "RUNTMSAAAAATu9pkeZZN3cVNNw4GOUxueHEixTzm9R7e7MN0k3itVRAOfmWB0wJJnw1R+TlDITlNIiV/J1hxl/u9rDcSzX0m", "RUNTMSAAAABogT4jkDtu/qbfUCsR8ytE7STQ0FLahj7oxAj94s5KxTvK1V281m1RpTA09IOntRGyROecHzkhWVGtl2w/UZf0" };
 

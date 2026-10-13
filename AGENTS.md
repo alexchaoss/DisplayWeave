@@ -19,7 +19,7 @@ Read the relevant source before changing it. Start with `git status --short`, `g
 
 ## Working conventions
 
-- Prefer the existing PowerShell scripts (`scripts/`, `tests/`, `installer/`), Windows .NET Framework (C# 5 `csc`) and pinned Zig toolchain. No new framework is needed. Keep new files in the folder for their concern; do not add sources or scripts at the repository root.
+- Prefer the existing PowerShell scripts (`scripts/`, `tests/`, `installer/`), Windows .NET Framework (C# 5 `csc`) and pinned Zig toolchain. Inno Setup 6.3+ builds the setup (user-approved, 2026-10-13; CI runners have it preinstalled). No new framework is needed. Keep new files in the folder for their concern; do not add sources or scripts at the repository root.
 - `dist`, `release`, `.tools` and `test-results` are ignored local artifacts, not files available in a fresh clone.
 - Build/policy checks are separate from live display and input tests. Live fixtures change this user's desktop; follow the runbook and current task scope. Do not run them for documentation-only changes.
 - Pin window/process/device identity before mutation; a PID, HWND, display number or driver-store filename alone is insufficient. Preserve ownership checks and conditional restoration when reusing code.
