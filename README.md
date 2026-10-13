@@ -482,7 +482,7 @@ version files. Release archives contain no personal settings.
 - Automatic maximize and borderless fullscreen handling from outside the app, with
   Force rules that load the component for apps that need it.
 - A Direct3D 11 windowed rendering fixture exercises monitor APIs, layout changes,
-  restoration, loading, and continued rendering; see `TESTING.md` for actual results.
+  restoration, loading, and continued rendering; see [docs/testing.md](docs/testing.md) for actual results.
 - No graphics-API exclusive-fullscreen interception in the new engine. Commercial
   game compatibility remains unverified.
 - A confirmed elevation mismatch can be addressed with the explicit administrator

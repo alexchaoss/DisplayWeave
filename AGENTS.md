@@ -25,4 +25,4 @@ Read the relevant source before changing it. Start with `git status --short`, `g
 - Pin window/process/device identity before mutation; a PID, HWND, display number or driver-store filename alone is insufficient. Preserve ownership checks and conditional restoration when reusing code.
 - Record the tested commit, architecture, commands, results and limits. Synthetic input is not hardware input; final restoration does not mean every field stayed unchanged during a session.
 - Never report a new installer, GUI or release as available until it exists and has been verified.
-- Update the handoff when implementation status changes. Keep `README.md` as the user-facing guide and `TESTING.md` as the evidence ledger; avoid duplicating detailed results across every document.
+- Update the handoff when implementation status changes. Keep `README.md` as the user-facing guide and `docs/testing.md` as the evidence ledger; avoid duplicating detailed results across every document.
