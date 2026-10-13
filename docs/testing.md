@@ -15,6 +15,10 @@ entries, but as stored blocks, so the signed binaries sit in the setup as their 
 - All 15 ZIP entries are stored blocks (each only a few bytes over its file size). The ZIP is 2,129,024 bytes and the
   setup 2,306,560 (1.0.3 local build: 1,106,432). Byte entropy of the setup: 6.72 bits per byte, against 7.98 for 1.0.3.
 - Whether the engines still flag it is checked on VirusTotal after the release.
+- Run 38421457983 on `2db8e3c` (added after the build): after approval every step passed and CI published v1.0.4 as
+  the latest release. Downloaded to an empty folder and not run: both checksums match and their `.sig` files verify
+  with the Key Vault key; the nine binaries and both `.ps1` files are validly signed and timestamped; the embedded
+  helper hashes match; all 15 ZIP entries are stored blocks. The signed setup is 2,516,264 bytes.
 
 ## Installer without Bypass or a self-delete command (1.0.3, October 13, 2026)
 
