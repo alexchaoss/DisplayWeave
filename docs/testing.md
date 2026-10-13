@@ -55,6 +55,16 @@ Results:
   The module sends `.tmp` files to signtool, which detects the PE format from the contents.
 - Signing with the real certificate happens only in CI's release build: no Azure CLI sign-in exists locally. CI checks
   the setup's signature, and after the setup tests it checks the installed `unins000.exe`.
+- Run 38444550250 on `a028738` (added after the build): after approval every step passed. That includes the signing-module
+  install, ISCC signing the setup and its uninstaller, and the check of the installed `unins000.exe`. CI published v1.0.5
+  as the latest release. Downloaded to an empty folder:
+  - Both checksums match, their `.sig` files verify with a pinned release key, and both build attestations verify.
+  - The setup is validly signed and timestamped. The nine binaries in the ZIP are validly signed.
+  - The native binaries and the launcher carry version 1.0.5. `DisplayWeave.exe` and `DisplayWeave.Core.dll` still have
+    no version resource (0.0.0.0).
+  - A test-mode install of the published setup wrote a validly signed `unins000.exe` and launcher. Its uninstall left
+    only `data`.
+  - The ZIP is 1,155,961 bytes and the signed setup 2,924,176.
 - Incident during development: a non-test-mode setup run removed the user's HKCU Run value, which was restored in its
   1.0.3 form. The tests now pass `/testmode=1`, and the uninstaller only removes a value that starts its own install.
 
