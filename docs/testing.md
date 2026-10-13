@@ -4,6 +4,18 @@ Commands recorded below before October 10, 2026 use the old root-level script pa
 
 The virtual-display projection prototype and its evidence moved to the `prototype` branch on October 11, 2026. Entries below that mention prototype or projection checks record what was run at the time.
 
+## Uncompressed package (1.0.4, October 13, 2026)
+
+Four engines still flagged the 1.0.3 setup (Elastic, Ikarus Trojan.Win64.Krypt, Kaspersky Trojan.Win32.Monder.gen,
+SecureAge). Its embedded ZIP was a 1 MB deflated blob, so the setup looked like a packed executable. From 1.0.4
+`package.ps1` builds the ZIP with `-CompressionLevel NoCompression`: Windows PowerShell still writes deflate (method 8)
+entries, but as stored blocks, so the signed binaries sit in the setup as their own bytes. Nothing else changed.
+
+- `scripts/release.ps1` (x64, unsigned local build): managed and native checks passed, installer 22 of 22, setup 6 of 6.
+- All 15 ZIP entries are stored blocks (each only a few bytes over its file size). The ZIP is 2,129,024 bytes and the
+  setup 2,306,560 (1.0.3 local build: 1,106,432). Byte entropy of the setup: 6.72 bits per byte, against 7.98 for 1.0.3.
+- Whether the engines still flag it is checked on VirusTotal after the release.
+
 ## Installer without Bypass or a self-delete command (1.0.3, October 13, 2026)
 
 Five VirusTotal engines flagged the 1.0.2 setup (Kaspersky Trojan.Win32.Monder.gen, Ikarus Trojan.Win64.Krypt, Elastic,

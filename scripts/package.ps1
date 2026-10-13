@@ -63,7 +63,9 @@ try {
 
     $archiveName = "DisplayWeave-$version.zip"
     $stagedArchive = Join-Path $stagingDirectory $archiveName
-    Compress-Archive -Path (Join-Path $payloadDirectory '*') -DestinationPath $stagedArchive
+    # Stored, not deflated: the setup embeds this archive, and antivirus heuristics
+    # treat a large compressed blob inside an executable as a packed payload.
+    Compress-Archive -Path (Join-Path $payloadDirectory '*') -DestinationPath $stagedArchive -CompressionLevel NoCompression
     $sha256 = (Get-FileHash -LiteralPath $stagedArchive -Algorithm SHA256).Hash.ToLowerInvariant()
     $stagedChecksum = $stagedArchive + '.sha256'
     [IO.File]::WriteAllText($stagedChecksum, ($sha256 + '  ' + $archiveName + [Environment]::NewLine), (New-Object Text.UTF8Encoding($false)))

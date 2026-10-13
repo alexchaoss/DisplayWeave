@@ -84,7 +84,7 @@ They are not required for documentation changes. Keep the user informed when a r
 .\tests\installer-tests.ps1 -OutputDirectory .\test-results\installer-check
 ```
 
-`version.txt` and `release.json` must agree. Packaging uses an allowlist and generates ZIP/checksum output under `release`; Installer regression checks use temporary fixtures without GitHub calls or application launches; the only registry write is a temporary HKCU RunOnce value in the in-use uninstall case, restored afterwards. Publishing a release is distinct from pushing source; do not imply one accomplished the other.
+`version.txt` and `release.json` must agree. Packaging uses an allowlist and generates ZIP/checksum output under `release`; from 1.0.4 the ZIP entries are stored, not deflated, so the setup does not carry a compressed blob; Installer regression checks use temporary fixtures without GitHub calls or application launches; the only registry write is a temporary HKCU RunOnce value in the in-use uninstall case, restored afterwards. Publishing a release is distinct from pushing source; do not imply one accomplished the other.
 
 `install.ps1` installs a GitHub release downloaded anonymously over HTTPS, accepted only with a release-key signature on its `.sha256` (`$releaseKeys`, the same list as `Updater.ReleaseKeys`), or a local ZIP/checksum without that check. Default legacy root is `%LOCALAPPDATA%\DisplayWeave`, with `versions`, `data` and `current.json`. `-Startup Preserve -NoLaunch` preserves startup and does not launch the app. Keep old version folders while applications may retain their DLLs. See [README install guidance](../README.md#install-or-update) for migration and elevated-instance behavior.
 
