@@ -48,6 +48,7 @@ Remote: [alexchaoss/DisplayWeave](https://github.com/alexchaoss/DisplayWeave) (`
 ## Proposed next steps
 
 0. Sign and publish 0.6.0 (`sign-release.ps1 -Version 0.6.0`) once CI has drafted it; then live checks on this computer (a game resizing itself back to see the offer, a borderless window across a DisplayWeave restart, a shortcut, a profile switch, Shift while maximizing). The virtual-display option stays for later (user decision, 2026-10-12). A backup release key still needs the user: `sign-release.ps1 -NewKey` on another computer, then `-PinKey <base64>` here.
+   Code signing (2026-10-13): the Azure Artifact Signing account and certificate profile exist, and `build.yml` signs the release build ([development runbook](development.md#setup-and-release-flow)). It has not run yet: it needs the user's app registration with its federated credential and signer role, and the GitHub `release` environment with its two secrets. Change `README.md` and `.github/SECURITY.md` ("not code-signed") only after a signed release is verified.
 1. The user tests their game windowed and maximized, and in borderless fullscreen, with 0.5.11.
 2. One **Restart as administrator** run to confirm the Program Files helper copy, attach and cleanup.
 3. Confirm CI built and published `v0.5.6-preview` from the push to the public repository (or publish manually), then observe the first automatic update from 0.5.6.

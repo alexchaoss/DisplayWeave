@@ -14,13 +14,53 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # Decides before the builds whether this push makes a release, because only that build is signed.
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # Draft releases are listed only to tokens that can write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Find whether this version already has a release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAIN_PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        run: |
+          version="$(tr -d '[:space:]' < src/DisplayWeave/version.txt)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          [ "$MAIN_PUSH" = "true" ] || exit 0
+          # The list includes drafts, so a draft waiting for its signature is not made twice.
+          if gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName' | grep -qxF "v$version"; then
+            echo "v$version already has a release or draft; bump src/DisplayWeave/version.txt to make another."
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
         os: [windows-2022, windows-2025]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    # The release build signs through the release environment, which admits only main; its
+    # federated credential is the only way into the Azure signing account.
+    environment: ${{ matrix.os == 'windows-2022' && needs.version.outputs.release == 'true' && 'release' || '' }}
+    permissions:
+      contents: read
+      id-token: write # Azure sign-in for code signing
+    env:
+      SIGN: ${{ matrix.os == 'windows-2022' && needs.version.outputs.release == 'true' }}
     defaults:
       run:
         shell: pwsh
@@ -37,9 +77,40 @@ jobs:
       - name: Build x64 and x86 native components
         run: ./scripts/build-native.ps1 -Architecture all
 
+      - name: Sign in to Azure for code signing
+        if: env.SIGN == 'true'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      # Before build.ps1, which hashes the helpers into the app: signing changes their bytes.
+      - name: Sign the native components
+        if: env.SIGN == 'true'
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: https://eus.codesigning.azure.net/
+          signing-account-name: displayweave
+          certificate-profile-name: displayweave-public
+          files-folder: ${{ github.workspace }}\dist
+          files-folder-filter: exe,dll
+          files-folder-recurse: true
+
       # After the native components: the app embeds their hashes for administrator mode.
       - name: Build the Windows application
         run: ./scripts/build.ps1
+
+      - name: Sign the Windows application
+        if: env.SIGN == 'true'
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: https://eus.codesigning.azure.net/
+          signing-account-name: displayweave
+          certificate-profile-name: displayweave-public
+          files: |
+            ${{ github.workspace }}\dist\DisplayWeave.exe
+            ${{ github.workspace }}\dist\DisplayWeave.Core.dll
 
       # These test modes do not open application windows, inject hooks, or change
       # the desktop. Monitor/window rendering tests require an interactive desktop.
@@ -107,12 +178,34 @@ jobs:
         shell: powershell
         run: ./tests/installer-tests.ps1 -OutputDirectory test-results/ci/powershell-5.1
 
-      # Quiet-mode setup runs against a temporary install root; nothing is launched or registered.
-      - name: Build the setup and run its end-to-end checks
+      - name: Build the setup
         timeout-minutes: 5
+        run: ./scripts/build-setup.ps1
+
+      - name: Sign the setup
+        if: env.SIGN == 'true'
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: https://eus.codesigning.azure.net/
+          signing-account-name: displayweave
+          certificate-profile-name: displayweave-public
+          files-folder: ${{ github.workspace }}\release
+          files-folder-filter: exe
+
+      # Signing changed the setup, so its .sha256 is written again in build-setup.ps1's format.
+      - name: Check the signatures
+        if: env.SIGN == 'true'
         run: |
-          ./scripts/build-setup.ps1
-          ./tests/setup-tests.ps1 -OutputDirectory test-results/ci
+          $setup = Get-Item release/DisplayWeave-Setup-*.exe
+          $hash = (Get-FileHash -LiteralPath $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText($setup.FullName + '.sha256', $hash + '  ' + $setup.Name + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+          $unsigned = @(@(Get-ChildItem dist -Recurse -Include *.exe, *.dll) + $setup | Where-Object { (Get-AuthenticodeSignature -LiteralPath $_.FullName).Status -ne 'Valid' })
+          if ($unsigned.Count -gt 0) { throw "Not signed: $($unsigned.FullName -join ', ')" }
+
+      # Quiet-mode setup runs against a temporary install root; nothing is launched or registered.
+      - name: Run the setup's end-to-end checks
+        timeout-minutes: 5
+        run: ./tests/setup-tests.ps1 -OutputDirectory test-results/ci
 
       - name: Upload test reports
         if: always()
