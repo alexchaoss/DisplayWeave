@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -16,6 +17,13 @@ namespace DisplayWeave
         public override string ToString()
         {
             return Title ?? String.Empty;
+        }
+
+        // Rules match the program, its stable window class and a Store app's ID, so these two windows give the same rule.
+        public bool SameApp(ApplicationIdentity other)
+        {
+            return Identity != null && other != null && ApplicationRule.SameApp(Identity.ExecutablePath, Identity.WindowClass, Identity.AppId,
+                other.ExecutablePath, other.WindowClass, other.AppId);
         }
     }
 
@@ -69,6 +77,41 @@ namespace DisplayWeave
                 return StringComparer.CurrentCultureIgnoreCase.Compare(left.Title, right.Title);
             });
             return result;
+        }
+
+        // One entry per app, as rules see apps: a browser's windows (one per set of tabs) are one app, named after its program.
+        public static List<WindowCandidate> ListApps()
+        {
+            return GroupByApp(ListWindows(), Native.GetForegroundWindow());
+        }
+
+        // Each entry stands for the app's foreground window, else its first one. Two apps with the same name (one program,
+        // two window classes) also show a window title.
+        internal static List<WindowCandidate> GroupByApp(List<WindowCandidate> windows, IntPtr foreground)
+        {
+            List<WindowCandidate> apps = new List<WindowCandidate>();
+            List<string> titles = new List<string>();
+            foreach (WindowCandidate window in windows)
+            {
+                int index = apps.FindIndex(delegate(WindowCandidate app) { return app.SameApp(window.Identity); });
+                if (index < 0) { apps.Add(new WindowCandidate { Handle = window.Handle, Identity = window.Identity, Title = AppName(window) }); titles.Add(window.Title); }
+                else if (window.Handle == foreground) { apps[index].Handle = window.Handle; apps[index].Identity = window.Identity; titles[index] = window.Title; }
+            }
+            List<string> names = apps.ConvertAll(delegate(WindowCandidate app) { return app.Title; });
+            for (int i = 0; i < apps.Count; i++)
+                if (names.FindAll(delegate(string name) { return name == names[i]; }).Count > 1) apps[i].Title += "  ·  " + titles[i];
+            apps.Sort(delegate(WindowCandidate left, WindowCandidate right) { return StringComparer.CurrentCultureIgnoreCase.Compare(left.Title, right.Title); });
+            return apps;
+        }
+
+        private static string AppName(WindowCandidate window)
+        {
+            // Every Store app runs in the same host program; its window title names it.
+            if (window.Identity.AppId != null) return window.Title;
+            string file = Path.GetFileName(window.Identity.ExecutablePath), description = null;
+            try { description = FileVersionInfo.GetVersionInfo(window.Identity.ExecutablePath).FileDescription; }
+            catch (FileNotFoundException) { }
+            return String.IsNullOrWhiteSpace(description) ? file : description.Trim() + "  (" + file + ")";
         }
 
         private static bool IsEligible(IntPtr handle, out string title, out ApplicationIdentity identity)

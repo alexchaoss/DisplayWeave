@@ -167,9 +167,20 @@ namespace DisplayWeave
                     bool resolved = RegionGeometry.TryResolveRegion(rule, layout, out region);
                     RegionControlMode mode = AutomaticRegionPolicy.Decide(layout.AutomaticRegions, Paused,
                         released.Contains(identity.ProcessKey), rule == null ? (ApplicationAction?)null : rule.Action, resolved);
+                    // A Force or Maximize rule that pins no region (empty ZoneId) handles the app in whichever region it is
+                    // currently in, like automatic handling, but with the rule's mode: inject for Force, outside fit for Maximize.
+                    bool pinned = rule != null && !String.IsNullOrEmpty(rule.ZoneId);
+                    RegionControlMode forcedAutomatic = RegionControlMode.None;
+                    if (rule != null && !pinned && !Paused && !released.Contains(identity.ProcessKey) &&
+                        (rule.Action == ApplicationAction.ForceFullscreen || rule.Action == ApplicationAction.MaximizeInRegion))
+                    {
+                        forcedAutomatic = rule.Action == ApplicationAction.ForceFullscreen ? RegionControlMode.Force : RegionControlMode.Maximize;
+                        mode = RegionControlMode.Automatic;
+                    }
                     if (mode == RegionControlMode.None)
                     {
-                        if (rule != null && rule.Action != ApplicationAction.Ignore && rule.Action != ApplicationAction.CenteredFullscreen &&
+                        // Only a rule that pinned a region can have lost it; a rule that pins none is never "its region is gone".
+                        if (rule != null && pinned && rule.Action != ApplicationAction.Ignore && rule.Action != ApplicationAction.CenteredFullscreen &&
                             !resolved && !released.Contains(identity.ProcessKey))
                             ruleProblems.Add(new HandledApp { Target = identity, State = HandledAppState.Error, Error = Path.GetFileName(identity.ExecutablePath) +
                                 " (PID " + identity.ProcessId + "): its saved rule names a region or display that no longer exists, so DisplayWeave leaves it alone." +
@@ -216,10 +227,18 @@ namespace DisplayWeave
                     if (!automaticPolicy.Observe(identity.Key, currentBounds, restoredBounds, expanded, false,
                         area, layout.Zones, out zoneId, out region)) { Disable(existing); continue; }
                     if (expanded && !shiftSkipped.Contains(identity.Key)) RememberRegion(identity, layout, zoneId);
-                    // Automatic handling never loads the component: it fits maximized and borderless fullscreen windows from
-                    // outside. Only the live hook fixtures, scoped to one executable, still load it automatically.
-                    if (String.IsNullOrWhiteSpace(AutomaticExecutableFilter) || (existing == null && OutsideFitOnly(identity)))
-                    { Disable(existing); FitFromOutside(identity, region); continue; }
+                    // Automatic handling fits maximized and borderless fullscreen windows from outside and loads nothing,
+                    // unless inject-by-default is on (DISPLAYWEAVE_INJECT_DEFAULT): then an eligible app is injected and
+                    // confined to its current region. Shell, folder, launcher and already-refused apps are not eligible and
+                    // fall back to the outside fit, so a game whose protection refuses the hook is still fitted from outside.
+                    // The live hook fixtures, scoped to one executable, also load it.
+                    bool eligibleInject = !OutsideFitOnly(identity) && !LauncherProcessProtection.IsExcludedExecutable(identity.ExecutablePath);
+                    bool wantInject;
+                    if (forcedAutomatic == RegionControlMode.Force) wantInject = eligibleInject;        // pinless Force rule: inject, else fall back outside
+                    else if (forcedAutomatic == RegionControlMode.Maximize) wantInject = false;         // pinless Maximize rule: outside fit
+                    else wantInject = (InjectDefault && eligibleInject && !ChromiumWindowProtection.IsChromiumWindow(identity.WindowClass)) ||
+                        (!String.IsNullOrWhiteSpace(AutomaticExecutableFilter) && !(existing == null && OutsideFitOnly(identity)));
+                    if (!wantInject) { Disable(existing); FitFromOutside(identity, region); continue; }
                     if (existing != null) AttachCore(identity, region, false, true, layoutRegions, zoneId);
                     else if (!failed.Contains(identity.Key) && DateTime.UtcNow >= nextAutomaticLaunch)
                     {

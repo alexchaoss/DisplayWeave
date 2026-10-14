@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace DisplayWeave
 {
@@ -24,6 +25,10 @@ namespace DisplayWeave
             internal bool Styled;
             internal long RemovedStyle, RemovedExStyle;
             internal Rectangle OriginalBounds;
+            // Clip-host experiment (FullscreenController.ClipHost.cs): the region-sized window the app is reparented into,
+            // and the app's own top-level style to put back. OriginalBounds holds its place for the restore.
+            internal IntPtr Host;
+            internal long HostStyle, HostExStyle;
         }
         private readonly Dictionary<IntPtr, MaximizedFit> maximized = new Dictionary<IntPtr, MaximizedFit>();
 
@@ -51,16 +56,36 @@ namespace DisplayWeave
 
         public void LeaveFittedWindows()
         {
-            foreach (IntPtr handle in new List<IntPtr>(maximized.Keys)) if (!maximized[handle].Styled) maximized.Remove(handle);
+            // A clip-host window cannot be left for the next version: the host dies with this process, so release it first.
+            foreach (IntPtr handle in new List<IntPtr>(maximized.Keys))
+                if (!maximized[handle].Styled) { ReleaseHost(maximized[handle]); maximized.Remove(handle); }
         }
 
         // Chromium puts its fullscreen window back over the whole monitor whenever it is clicked, restacked or loses or
-        // regains focus (its taskbar workaround). That is expected, so such a window is refitted as soon as it moves.
-        public bool RefitsAtOnce(IntPtr handle)
+        // regains focus (its taskbar workaround). Called as soon as a top-level window moves: a fitted one goes straight back
+        // to its region, without the window list a tick reads. True asks for a tick at once: a Chromium window just entered
+        // fullscreen and needs its region, or a fitted one closed, changed process or was released.
+        public bool RefitNow(IntPtr handle)
         {
             MaximizedFit fit;
-            return maximized.TryGetValue(handle, out fit) && !fit.Styled && fit.Attempts < MaximumFitAttempts &&
-                ChromiumWindowProtection.IsChromiumWindow(fit.Target.WindowClass);
+            if (!maximized.TryGetValue(handle, out fit)) return !Paused && EnteredChromiumFullscreen(handle);
+            if (fit.Styled || fit.Attempts >= MaximumFitAttempts || !ChromiumWindowProtection.IsChromiumWindow(fit.Target.WindowClass)) return false;
+            uint pid;
+            if (Paused || released.Contains(fit.Target.ProcessKey) || faulted.Contains(fit.Target.Key) || !IsWindow(handle) ||
+                GetWindowThreadProcessId(handle, out pid) == 0 || pid != fit.Target.ProcessId) return true;
+            try { FitMaximized(fit.Target, fit.Region); }
+            catch (Exception ex) { Quarantine(fit.Target, ex); } // as in a tick: only this app is left alone
+            return false;
+        }
+
+        // Cheap enough for every move of every window: the class first, then the style and size.
+        private static bool EnteredChromiumFullscreen(IntPtr handle)
+        {
+            StringBuilder name = new StringBuilder(32);
+            GetClassName(handle, name, name.Capacity);
+            NativeRect bounds;
+            return ChromiumWindowProtection.IsChromiumWindow(name.ToString()) && IsWindowVisible(handle) && !IsIconic(handle) &&
+                GetWindowRect(handle, out bounds) && BorderlessFullscreen(handle, Rectangle.FromLTRB(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom), null);
         }
 
         internal void FitMaximized(ApplicationIdentity target, Rectangle region)
@@ -68,7 +93,7 @@ namespace DisplayWeave
             IntPtr handle = target.Handle;
             MaximizedFit fit;
             maximized.TryGetValue(handle, out fit);
-            if (fit != null && fit.Target.Key != target.Key) { maximized.Remove(handle); fit = null; }
+            if (fit != null && fit.Target.Key != target.Key) { ReleaseHost(fit); maximized.Remove(handle); fit = null; }
             Rectangle current, wanted, frame;
             if (!TryMaximizedBounds(handle, region, out current, out wanted, out frame)) return;
             // A restored window is back where Windows keeps its normal position; nothing to undo.
@@ -76,6 +101,7 @@ namespace DisplayWeave
             {
                 if (!IsIconic(handle)) shiftSkipped.Remove(target.Key);
                 if (fit == null || IsIconic(handle)) return;
+                ReleaseHost(fit); // left fullscreen: give the app back its own top-level window before forgetting it
                 maximized.Remove(handle);
                 // Restoring is the retry for a failed fit: show the component's reason again, not the old fit failure.
                 if (fit.Attempts >= MaximumFitAttempts)
@@ -105,6 +131,8 @@ namespace DisplayWeave
             // Chromium's resizing back is not a swap chain being rebuilt: no wait, and only a fight that never lets it
             // settle in its region (four moves without one tick seeing it fitted) stops the fit.
             bool chromium = ChromiumWindowProtection.IsChromiumWindow(target.WindowClass);
+            // Experiment: clip the window inside a host we own instead of chasing its moves. Chromium cannot spread past the host.
+            if (ClipHost && chromium) { FitHosted(handle, fit, region); return; }
             if (fit.Attempts >= MaximumFitAttempts || (!chromium && DateTime.UtcNow - fit.LastAttempt < FitRetryDelay)) return;
             fit.LastAttempt = DateTime.UtcNow;
             // A borderless game that resizes itself back once always will: each further move only risks crashing
@@ -137,7 +165,7 @@ namespace DisplayWeave
             readyApps.Add(new HandledApp { Target = target, Region = region, State = HandledAppState.Ready });
             MaximizedFit fit;
             maximized.TryGetValue(handle, out fit);
-            if (fit != null && (fit.Target.Key != target.Key || !fit.Styled)) { maximized.Remove(handle); fit = null; }
+            if (fit != null && (fit.Target.Key != target.Key || !fit.Styled)) { ReleaseHost(fit); maximized.Remove(handle); fit = null; }
             NativeRect bounds;
             // Changing a style waits for the window's thread; a window that stopped responding would block this one.
             if (IsIconic(handle) || IsZoomed(handle) || IsHungAppWindow(handle) || !GetWindowRect(handle, out bounds)) return;
@@ -207,10 +235,26 @@ namespace DisplayWeave
             return failed.Contains(target.Key) || OutsideOnlyReason(target.WindowClass) != null;
         }
 
+        // Experiments, off by default (safe-by-default; the shipped build never loads into the browser or by default):
+        //   DISPLAYWEAVE_FORCE_CHROMIUM=1 drops the Chromium outside-only guard so a browser/Electron app can be opted in.
+        //   DISPLAYWEAVE_INJECT_DEFAULT=1 makes automatic handling use the component for eligible apps in their current region.
+        // Browser/Electron windows share one window class, and some of them (e.g. VS Code) terminate themselves when loaded
+        // into while others (Chrome) do not, and they cannot be told apart from outside. So inject-default does NOT make them
+        // eligible on their own (inject-default skips them in TickWindows), but a rule may load one in: the Chromium gate is
+        // open by default so a Force rule works without any env var. Set DISPLAYWEAVE_FORCE_CHROMIUM=0 to put the guard back.
+        // AttachCore hands the matching permission to the native helper, so the native gate follows this decision.
+        internal static readonly bool InjectDefault = EnvEnabled("DISPLAYWEAVE_INJECT_DEFAULT");
+        private static readonly bool ForceChromium = Environment.GetEnvironmentVariable("DISPLAYWEAVE_FORCE_CHROMIUM") != "0";
+        private static bool EnvEnabled(string name)
+        {
+            string value = Environment.GetEnvironmentVariable(name);
+            return value != null && (value == "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase));
+        }
+
         // Why a window class only ever gets the outside maximize fit; null when its component may be used.
         internal static string OutsideOnlyReason(string windowClass)
         {
-            if (ChromiumWindowProtection.IsChromiumWindow(windowClass)) return ChromiumWindowProtection.Message;
+            if (!ForceChromium && ChromiumWindowProtection.IsChromiumWindow(windowClass)) return ChromiumWindowProtection.Message;
             if (ShellProcessProtection.IsFolderWindow(windowClass)) return ShellProcessProtection.FolderMessage;
             return null;
         }
@@ -239,11 +283,16 @@ namespace DisplayWeave
                         bool resolved = RegionGeometry.TryResolveRegion(rule, layout, out region);
                         RegionControlMode mode = AutomaticRegionPolicy.Decide(layout.AutomaticRegions, false, released.Contains(current.ProcessKey),
                             rule == null ? (ApplicationAction?)null : rule.Action, resolved);
+                        // A Force or Maximize rule that pins no region keeps the fit in the app's current region, like automatic.
+                        if (rule != null && String.IsNullOrEmpty(rule.ZoneId) && !released.Contains(current.ProcessKey) &&
+                            (rule.Action == ApplicationAction.ForceFullscreen || rule.Action == ApplicationAction.MaximizeInRegion))
+                            mode = RegionControlMode.Automatic;
                         if (fit.Styled ? mode == RegionControlMode.Borderless : KeepsMaximizedFit(mode, OutsideFitOnly(current))) continue;
                         ReturnToMonitor(fit);
                     }
                 }
                 catch (Exception ex) { Quarantine(fit.Target, ex); } // the other fitted windows are still checked
+                ReleaseHost(fit); // no-op unless a clip-host window was not already released by ReturnToMonitor above
                 maximized.Remove(fit.Target.Handle);
             }
         }
@@ -255,6 +304,7 @@ namespace DisplayWeave
                 ApplicationIdentity current;
                 string error;
                 if (TryInspect(fit.Target.Handle, out current, out error) && current.Key == fit.Target.Key) ReturnToMonitor(fit);
+                else ReleaseHost(fit); // a window the engine cannot inspect (its own, or gone) still needs its host torn down
             }
             maximized.Clear();
             SaveJournal();
@@ -263,6 +313,7 @@ namespace DisplayWeave
         private static void ReturnToMonitor(MaximizedFit fit)
         {
             IntPtr handle = fit.Target.Handle;
+            if (fit.Host != IntPtr.Zero) { ReleaseHost(fit); return; } // a clip-host window is restored by un-parenting it
             if (fit.Styled) { RestoreBorderless(handle, fit.RemovedStyle, fit.RemovedExStyle, fit.OriginalBounds); return; }
             Rectangle current, wanted, frame;
             DisplayMonitor monitor = DisplayMonitor.FromWindow(handle);
@@ -292,7 +343,10 @@ namespace DisplayWeave
             long style = WindowLong(handle, GwlStyle), extended = WindowLong(handle, GwlExStyle);
             DisplayMonitor monitor = DisplayMonitor.FromWindow(handle);
             return (style & WsCaption) == 0 && (extended & OverlayExStyles) == 0 && monitor != null &&
-                (RegionGeometry.NearlyCovers(frame, monitor.Bounds) || (fit != null && RegionGeometry.NearlyEquals(frame, fit.Region)));
+                (RegionGeometry.NearlyCovers(frame, monitor.Bounds) || (fit != null && (RegionGeometry.NearlyEquals(frame, fit.Region) ||
+                // Another display tool can move a fitted fullscreen Chromium window elsewhere when it loses focus. Chromium takes
+                // its sizing border away only in fullscreen and puts it back first when leaving, so without it the window is still fullscreen.
+                (ChromiumWindowProtection.IsChromiumWindow(fit.Target.WindowClass) && (style & WsThickFrame) == 0))));
         }
     }
 }

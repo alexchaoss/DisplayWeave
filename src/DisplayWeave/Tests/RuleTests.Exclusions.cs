@@ -52,28 +52,17 @@ namespace DisplayWeave
                     }
                 }
             });
-            test("Chromium windows are never hooked and keep the outside maximize fit", delegate
+            test("A rule may load a Chromium window; default and Maximize handling keep the outside fit", delegate
             {
+                // The gate is open by default (DISPLAYWEAVE_FORCE_CHROMIUM defaults on), so a Force rule is free to load a
+                // Chromium window. Real injection launches a helper into the target, so it is validated live, not here.
                 foreach (string cls in new[] { "Chrome_WidgetWin_1", "Chrome_WidgetWin_0" })
-                {
-                    // An impossible PID and fake HWND keep this test independent of user applications.
-                    ApplicationIdentity chromium = new ApplicationIdentity { ExecutablePath = @"C:\Apps\Browser.exe",
-                        WindowClass = cls, ProcessId = UInt32.MaxValue, CreationTime = 1, Handle = new IntPtr(1) };
-                    using (FullscreenController controller = new FullscreenController())
-                    {
-                        controller.AutomaticExecutableFilter = chromium.ExecutablePath;
-                        Assert(!controller.Attach(chromium, new Rectangle(100, 100, 800, 600), true), "Explicit Force hooked a Chromium window: " + cls);
-                        Assert(!controller.Attach(chromium, new Rectangle(100, 100, 800, 600), false), "A saved rule hooked a Chromium window: " + cls);
-                        Assert(controller.LastMessage == ChromiumWindowProtection.Message, "The Chromium refusal lost its explanation.");
-                        Assert(controller.Count == 0 && controller.PendingCount == 0 && controller.FailureCount == 0,
-                            "A Chromium window started a helper or recorded a failure.");
-                    }
-                }
+                    Assert(FullscreenController.OutsideOnlyReason(cls) == null, "The Chromium gate is closed by default: " + cls);
                 foreach (string cls in new[] { "Chrome_RenderWidgetHostHWND", "MyChrome_WidgetWin_1", "chrome_widgetwin_1", "", null })
                     Assert(!ChromiumWindowProtection.IsChromiumWindow(cls), "A non-Chromium class was excluded: " + cls);
                 Assert(FullscreenController.KeepsMaximizedFit(RegionControlMode.Automatic, true) &&
                     FullscreenController.KeepsMaximizedFit(RegionControlMode.Force, true), "Automatic or Force handling dropped the outside fit.");
-                // A Chromium window with a Force rule is listed as Ready in its region before it is maximized.
+                // A Maximize rule never injects, so a Chromium window under one stays on the outside fit and starts no helper.
                 using (System.Windows.Forms.Form window = new System.Windows.Forms.Form())
                 {
                     DisplayMonitor primary = DisplayMonitor.FromRectangle(new Rectangle(0, 0, 1, 1));
@@ -82,16 +71,12 @@ namespace DisplayWeave
                         ProcessId = (uint)System.Diagnostics.Process.GetCurrentProcess().Id, CreationTime = 1, Handle = window.Handle };
                     ApplicationRules rules = new ApplicationRules();
                     rules.Rules.Add(new ApplicationRule { ExecutablePath = browser.ExecutablePath, WindowClass = browser.WindowClass, DisplayName = "Browser",
-                        Action = ApplicationAction.ForceFullscreen, MonitorDevice = primary.DeviceName, ZoneId = layout.Zones[1].Id });
+                        Action = ApplicationAction.MaximizeInRegion, MonitorDevice = primary.DeviceName, ZoneId = layout.Zones[1].Id });
                     using (FullscreenController controller = new FullscreenController())
                     {
                         controller.Tick(new[] { new WindowCandidate { Handle = window.Handle, Title = "Browser", Identity = browser } }, rules, layout);
-                        List<HandledApp> apps = controller.HandledApps();
-                        Rectangle area = layout.UseWorkArea ? primary.WorkingArea : primary.Bounds;
-                        Assert(apps.Count == 1 && apps[0].State == HandledAppState.Ready && apps[0].Region == layout.Zones[1].ToPixels(area) &&
-                            apps[0].Error == ChromiumWindowProtection.Message, "A Chromium window with a rule was not listed as Ready in its region.");
                         Assert(controller.Count == 0 && controller.PendingCount == 0 && controller.OutsideFitCount == 1,
-                            "A Chromium window with a rule started a helper or was not counted as handled.");
+                            "A Maximize rule on a Chromium window started a helper instead of the outside fit.");
                     }
                 }
             });

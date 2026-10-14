@@ -95,6 +95,9 @@ namespace DisplayWeave
                 target.Handle.ToInt64().ToString("X", CultureInfo.InvariantCulture) + " " + HelperProtocol.BoundsArguments(region) +
                 " --regions \"" + layoutKey + "\"" + (automatic ? " --auto" : String.Empty));
             start.UseShellExecute = false;
+            // The native preflight carries its own Chromium gate; hand it the same decision the managed side just made,
+            // so a rule that loads a browser/Electron window works without the user setting an env var.
+            start.EnvironmentVariables["DISPLAYWEAVE_FORCE_CHROMIUM"] = ForceChromium ? "1" : "0";
             start.CreateNoWindow = true;
             start.WindowStyle = ProcessWindowStyle.Hidden;
             start.RedirectStandardInput = true;
@@ -208,6 +211,9 @@ namespace DisplayWeave
                         RegionControlMode desired = AutomaticRegionPolicy.Decide(layout.AutomaticRegions, false,
                             released.Contains(session.Target.ProcessKey), currentRule == null ? (ApplicationAction?)null : currentRule.Action,
                             ruleResolved);
+                        // A Force rule that pins no region injects into the app's current region, like automatic handling.
+                        if (currentRule != null && currentRule.Action == ApplicationAction.ForceFullscreen && String.IsNullOrEmpty(currentRule.ZoneId) &&
+                            !released.Contains(session.Target.ProcessKey)) desired = RegionControlMode.Automatic;
                         if (desired == RegionControlMode.None || desired == RegionControlMode.Maximize ||
                             (desired == RegionControlMode.Automatic && !AutomaticCandidate(session.Target)) ||
                             (desired == RegionControlMode.Automatic) != session.Automatic)

@@ -113,7 +113,12 @@ namespace DisplayWeave
         // whenever it is maximized, Borderless shows it without its title bar, Centered leaves it alone.
         public string Assign(IntPtr window, int regionIndex, ApplicationAction action)
         {
-            if (regionIndex < 0 || regionIndex >= Layout.Zones.Count) return "There is no region for that shortcut.";
+            // regionIndex -1 pins no region: the app is handled in whichever region it is currently in. A positive index
+            // past the layout is still an error. Borderless and Centered always need a region.
+            if (regionIndex >= Layout.Zones.Count) return "There is no region for that shortcut.";
+            bool pin = regionIndex >= 0;
+            if (!pin && (action == ApplicationAction.BorderlessInRegion || action == ApplicationAction.CenteredFullscreen))
+                return "Choose a region for this option, or use a different option.";
             ApplicationIdentity identity;
             string error;
             if (!FullscreenController.TryInspect(window, out identity, out error)) return error;
@@ -121,31 +126,33 @@ namespace DisplayWeave
                 return "File Explorer folder windows can only use Maximize in region.";
             ApplicationRule rule = NewRule(identity, action);
             rule.MonitorDevice = Layout.MonitorDevice;
-            rule.ZoneId = Layout.Zones[regionIndex].Id;
+            rule.ZoneId = pin ? Layout.Zones[regionIndex].Id : null;
             Rules.Put(rule);
             Save();
-            Rectangle region;
-            List<Rectangle> regions;
-            // Saving normalizes the layout, so the region is resolved afterwards.
-            if (!RegionGeometry.TryResolveRegion(rule, Layout, out region) ||
-                !RegionGeometry.TryResolveLayout(Layout, out regions))
-                return "The region changed while saving. Review the layout and assign the application again.";
             string name = Path.GetFileName(identity.ExecutablePath);
+            string where = pin ? Layout.Zones[regionIndex].Name : "the region it is in";
+            Rectangle region = Rectangle.Empty;
+            List<Rectangle> regions = null;
+            // Saving normalizes the layout, so a pinned region is resolved afterwards.
+            if (pin && (!RegionGeometry.TryResolveRegion(rule, Layout, out region) || !RegionGeometry.TryResolveLayout(Layout, out regions)))
+                return "The region changed while saving. Review the layout and assign the application again.";
             if (action == ApplicationAction.MaximizeInRegion)
             {
                 // Nothing is attached; the next tick fits the window whenever it is maximized.
                 Engine.Readmit(identity);
                 return "Saved for " + name + ": maximize it or use its borderless fullscreen mode, and DisplayWeave fits it into " +
-                    Layout.Zones[regionIndex].Name + ". Nothing is loaded into the app.";
+                    where + ". Nothing is loaded into the app.";
             }
             if (action == ApplicationAction.BorderlessInRegion)
             {
                 Engine.Readmit(identity);
                 return "Saved for " + name + ": set it to Windowed, and DisplayWeave shows it without its title bar in " +
-                    Layout.Zones[regionIndex].Name + ". Nothing is loaded into the app.";
+                    where + ". Nothing is loaded into the app.";
             }
             if (action == ApplicationAction.CenteredFullscreen)
                 return "Saved for " + name + ": DisplayWeave leaves its window alone. Run it in exclusive fullscreen at the size App rules shows.";
+            // Force: a pinned region attaches now; without a pin the next tick injects it into the region it is in.
+            if (!pin) { Engine.Readmit(identity); return "Saved for " + name + ": DisplayWeave loads the component and confines its fullscreen to the region it is in."; }
             Engine.Attach(identity, region, true, regions);
             return Engine.LastMessage;
         }

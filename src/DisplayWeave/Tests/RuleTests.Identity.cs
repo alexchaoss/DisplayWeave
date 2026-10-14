@@ -23,6 +23,23 @@ namespace DisplayWeave
                 Assert(!rule.Matches(new ApplicationIdentity { ExecutablePath = @"C:\Apps\Editor.exe", WindowClass = "HwndWrapper[Other.exe;;9b7e8a1c-0000-4d6e-8f00-1234567890ab]" }),
                     "The rule matched another window class.");
             });
+            test("App rules list each app once: a browser's windows are one app, named after its program", delegate
+            {
+                Func<int, string, string, string, WindowCandidate> window = delegate(int handle, string path, string windowClass, string title)
+                {
+                    return new WindowCandidate { Handle = new IntPtr(handle), Title = title,
+                        Identity = new ApplicationIdentity { Handle = new IntPtr(handle), ExecutablePath = path, WindowClass = windowClass } };
+                };
+                string browser = @"C:\Missing\Browser\browser.exe", tool = @"C:\Missing\Tool\tool.exe";
+                List<WindowCandidate> apps = WindowManager.GroupByApp(new List<WindowCandidate> {
+                    window(1, browser, "Chrome_WidgetWin_1", "News - Browser"), window(2, tool, "ToolMain", "Tool"),
+                    window(3, browser.ToUpperInvariant(), "Chrome_WidgetWin_1", "Mail - Browser"), window(4, tool, "ToolPalette", "Palette") }, new IntPtr(3));
+                Assert(apps.Count == 3, "Expected the browser once and the tool's two window classes: " + apps.Count + ".");
+                Assert(apps[0].Title == "browser.exe" && apps[0].Handle == new IntPtr(3), "The browser was not listed once by its program, for its foreground window: " +
+                    apps[0].Title + " " + apps[0].Handle + ".");
+                Assert(apps[1].Title == "tool.exe  ·  Palette" && apps[2].Title == "tool.exe  ·  Tool", "One program's two apps were not told apart: " +
+                    apps[1].Title + " / " + apps[2].Title + ".");
+            });
             test("Store apps are told apart by their app ID, and Ignore replaces an app's other rules", delegate
             {
                 ApplicationRules rules = new ApplicationRules();

@@ -60,6 +60,8 @@ namespace DisplayWeave
         private struct TestRect { public int Left, Top, Right, Bottom; }
         [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr(IntPtr handle, int index);
         [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr handle, out TestRect rect);
+        [DllImport("user32.dll")] private static extern IntPtr GetParent(IntPtr handle);
+        [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr handle);
 
         private static long WindowStyle(IntPtr handle, int index) { return GetWindowLongPtr(handle, index).ToInt64(); }
 

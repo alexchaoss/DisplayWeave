@@ -115,9 +115,9 @@ namespace DisplayWeave
         private const uint SwpNoSize = 0x0001, SwpNoMove = 0x0002, SwpNoZOrder = 0x0004, SwpNoActivate = 0x0010, SwpFrameChanged = 0x0020,
             SwpNoOwnerZOrder = 0x0200, SwpNoSendChanging = 0x0400, SwpAsyncWindowPos = 0x4000;
         private const int GwlStyle = -16, GwlExStyle = -20;
-        private const long WsCaption = 0x00C00000L, WsMaximize = 0x01000000L;
+        private const long WsCaption = 0x00C00000L, WsMaximize = 0x01000000L, WsThickFrame = 0x00040000L;
         // The title bar and sizing border; the dialog, window, client and static edges.
-        private const long BorderStyles = WsCaption | 0x00040000L, BorderExStyles = 0x00000001L | 0x00000100L | 0x00000200L | 0x00020000L;
+        private const long BorderStyles = WsCaption | WsThickFrame,BorderExStyles = 0x00000001L | 0x00000100L | 0x00000200L | 0x00020000L;
         // Overlays and capture tools: never-activated, click-through or always-on-top windows.
         private const long OverlayExStyles = 0x08000000L | 0x00000020L | 0x00000008L;
         // Chromium-based apps reset any move of their maximized window in WM_WINDOWPOSCHANGING, so the outside fit skips that message.

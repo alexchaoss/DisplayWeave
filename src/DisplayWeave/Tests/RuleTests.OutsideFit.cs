@@ -181,18 +181,93 @@ namespace DisplayWeave
                         controller.ShiftHeld = delegate { return false; };
                         ApplicationIdentity app = new ApplicationIdentity { ExecutablePath = @"C:\Apps\App.exe", WindowClass = windowClass,
                             ProcessId = (uint)System.Diagnostics.Process.GetCurrentProcess().Id, CreationTime = 1, Handle = window.Handle };
-                        for (int round = 0; round < 3; round++)
+                        controller.FitMaximized(app, region); // the tick's first fit
+                        System.Windows.Forms.Application.DoEvents();
+                        Assert(WindowBounds(window.Handle) == region, windowClass + ": the first fit missed: " + WindowBounds(window.Handle));
+                        for (int round = 0; round < 6; round++)
                         {
-                            // As Chromium does on a click or a change of focus: back over the whole monitor.
-                            window.Bounds = primary.Bounds;
-                            controller.FitMaximized(app, region);
+                            // As Chromium does on a click or a change of focus: back over the whole monitor; as another display tool
+                            // does when it loses focus: into a wider region of its own.
+                            window.Bounds = round == 5 ? Rectangle.FromLTRB(region.Left - 60, region.Top, region.Right + 60, region.Bottom) : primary.Bounds;
+                            Assert(!controller.RefitNow(window.Handle), windowClass + " round " + round + ": a fitted window asked for a tick.");
                             System.Windows.Forms.Application.DoEvents();
-                            Assert((WindowBounds(window.Handle) == region) == (chromium || round == 0), windowClass + " round " + round +
-                                ": " + WindowBounds(window.Handle) + " (a game waits before it is moved again; Chromium does not).");
-                            controller.FitMaximized(app, region); // the next tick sees where it is
+                            Assert((WindowBounds(window.Handle) == region) == chromium, windowClass + " round " + round +
+                                ": " + WindowBounds(window.Handle) + " (a game waits for the tick; Chromium does not).");
+                            controller.RefitNow(window.Handle); // the fit's own move
                         }
-                        Assert(controller.RefitsAtOnce(window.Handle) == chromium, windowClass + ": wrong immediate refit.");
                         Assert(controller.TakeSuggestion() == null, windowClass + ": a Borderless in region rule was offered.");
+                        if (!chromium) continue;
+                        // Leaving fullscreen: the frame comes back first, then the window returns to its place. It is let go, not moved.
+                        window.FormBorderStyle = System.Windows.Forms.FormBorderStyle.Sizable;
+                        Rectangle normal = new Rectangle(region.X + 40, region.Y + 40, 640, 480);
+                        window.Bounds = normal;
+                        Assert(!controller.RefitNow(window.Handle), "A window leaving fullscreen asked for a tick.");
+                        System.Windows.Forms.Application.DoEvents();
+                        Assert(WindowBounds(window.Handle) == normal, "A window leaving fullscreen was moved: " + WindowBounds(window.Handle));
+                        Assert(!controller.RefitNow(window.Handle), "A window that left fullscreen asked for a tick.");
+                    }
+                }
+            });
+
+            test("The clip-host experiment reparents a fullscreen Chromium window and releasing it never closes the app", delegate
+            {
+                DisplayMonitor primary = DisplayMonitor.FromRectangle(new Rectangle(0, 0, 1, 1));
+                LayoutSettings layout = new LayoutSettings { MonitorDevice = primary.DeviceName };
+                Rectangle region = layout.Zones[0].ToPixels(layout.UseWorkArea ? primary.WorkingArea : primary.Bounds);
+                // Never shown: a borderless window covering the monitor, as Chromium's fullscreen window is.
+                using (System.Windows.Forms.Form window = new System.Windows.Forms.Form { FormBorderStyle = System.Windows.Forms.FormBorderStyle.None,
+                    StartPosition = System.Windows.Forms.FormStartPosition.Manual, Bounds = primary.Bounds })
+                {
+                    Rectangle original = WindowBounds(window.Handle);
+                    ApplicationIdentity app = new ApplicationIdentity { ExecutablePath = @"C:\Apps\App.exe", WindowClass = "Chrome_WidgetWin_1",
+                        ProcessId = (uint)System.Diagnostics.Process.GetCurrentProcess().Id, CreationTime = 1, Handle = window.Handle };
+                    using (FullscreenController controller = new FullscreenController())
+                    {
+                        controller.ClipHost = true;
+                        controller.ShiftHeld = delegate { return false; };
+                        controller.FitMaximized(app, region);
+                        System.Windows.Forms.Application.DoEvents();
+                        Assert(GetParent(window.Handle) != IntPtr.Zero, "The clip host did not reparent the fullscreen window into a host.");
+                        // Dispose is the ordinary exit: destroying a parent destroys its children, so the app's window must be
+                        // un-parented first and handed back, never taken down with the host.
+                    }
+                    System.Windows.Forms.Application.DoEvents();
+                    Assert(IsWindow(window.Handle), "Releasing the clip host destroyed the app's own window.");
+                    Assert(GetParent(window.Handle) == IntPtr.Zero && WindowBounds(window.Handle) == original,
+                        "The window did not get its own top-level frame and place back: parent " + GetParent(window.Handle) + ", bounds " + WindowBounds(window.Handle) + ".");
+                }
+            });
+
+            test("A rule that pins no region handles the app in its current region; a pinned rule with a missing region still reports a problem", delegate
+            {
+                DisplayMonitor primary = DisplayMonitor.FromRectangle(new Rectangle(0, 0, 1, 1));
+                LayoutSettings layout = new LayoutSettings { MonitorDevice = primary.DeviceName };
+                using (RefusingWindow window = new RefusingWindow())
+                {
+                    ApplicationIdentity editor = new ApplicationIdentity { ExecutablePath = @"C:\Apps\Editor.exe", WindowClass = "EditorWindow",
+                        ProcessId = (uint)System.Diagnostics.Process.GetCurrentProcess().Id, CreationTime = 1, Handle = window.Handle };
+                    WindowCandidate[] windows = { new WindowCandidate { Handle = window.Handle, Title = "Editor", Identity = editor } };
+                    // Maximize with no pinned region (empty ZoneId): fitted into whichever region it is in, like automatic.
+                    ApplicationRules unpinned = new ApplicationRules();
+                    unpinned.Rules.Add(new ApplicationRule { ExecutablePath = editor.ExecutablePath, WindowClass = editor.WindowClass, DisplayName = "Editor",
+                        Action = ApplicationAction.MaximizeInRegion, MonitorDevice = primary.DeviceName, ZoneId = null });
+                    using (FullscreenController controller = new FullscreenController())
+                    {
+                        controller.Tick(windows, unpinned, layout);
+                        Assert(layout.Zones.Exists(delegate(Zone zone) { return zone.ToPixels(layout.UseWorkArea ? primary.WorkingArea : primary.Bounds) == window.VisibleFrame; }),
+                            "A pinless Maximize rule did not fit the window into its current region: " + window.VisibleFrame + ".");
+                        Assert(!controller.HandledApps().Exists(delegate(HandledApp app) { return app.State == HandledAppState.Error; }),
+                            "A rule that pins no region was wrongly reported as a broken-region problem.");
+                    }
+                    // A rule that pins a region which no longer exists is still reported as a problem.
+                    ApplicationRules broken = new ApplicationRules();
+                    broken.Rules.Add(new ApplicationRule { ExecutablePath = editor.ExecutablePath, WindowClass = editor.WindowClass, DisplayName = "Editor",
+                        Action = ApplicationAction.MaximizeInRegion, MonitorDevice = primary.DeviceName, ZoneId = "no-such-zone" });
+                    using (FullscreenController controller = new FullscreenController())
+                    {
+                        controller.Tick(windows, broken, layout);
+                        Assert(controller.HandledApps().Exists(delegate(HandledApp app) { return app.State == HandledAppState.Error; }),
+                            "A rule that pins a region that no longer exists was not reported as a problem.");
                     }
                 }
             });

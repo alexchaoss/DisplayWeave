@@ -817,6 +817,20 @@ static BOOL CALLBACK CheckTaskbarOwner(HWND hwnd, LPARAM parameter) {
     return TRUE;
 }
 
+// Experiment, off unless DISPLAYWEAVE_FORCE_CHROMIUM=1: lets a Force rule hook a Chromium window even though its
+// window handling self-terminates when hooked, to confirm that on a throwaway browser profile. The shell guard is
+// never lifted. The managed side carries the matching gate.
+static bool RS_EnvIsOne(const wchar_t* name) {
+    wchar_t value[8];
+    DWORD length = GetEnvironmentVariableW(name, value, 8);
+    return length == 1 && value[0] == L'1';
+}
+// Either flag opens the Chromium gate, matching the managed side: INJECT_DEFAULT injects every eligible app,
+// Chromium included, so the helper must not refuse Chromium when only INJECT_DEFAULT is set.
+static bool RS_ForceChromiumEnabled() {
+    return RS_EnvIsOne(L"DISPLAYWEAVE_FORCE_CHROMIUM") || RS_EnvIsOne(L"DISPLAYWEAVE_INJECT_DEFAULT");
+}
+
 // Read-only preflight. Run before opening/writing the control mapping or loading
 // the hook DLL; selecting an Explorer folder must never hook its desktop process.
 static bool ValidateNonShellTarget(DWORD pid, HWND hwnd, HANDLE process,
@@ -829,7 +843,7 @@ static bool ValidateNonShellTarget(DWORD pid, HWND hwnd, HANDLE process,
         reason = "Windows desktop, taskbar, and Explorer windows cannot be controlled";
         error = ERROR_ACCESS_DENIED; return false;
     }
-    if (RS_IsChromiumWindowClass(className)) {
+    if (RS_IsChromiumWindowClass(className) && !RS_ForceChromiumEnabled()) {
         reason = "Chromium windows are excluded because hooking their window handling makes them stop themselves";
         error = ERROR_NOT_SUPPORTED; return false;
     }

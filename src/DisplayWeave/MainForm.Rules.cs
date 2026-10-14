@@ -16,6 +16,7 @@ namespace DisplayWeave
         private bool picking;
         private ApplicationIdentity pickedIdentity;
         private readonly ComboBox ruleRegion = new ComboBox();
+        private readonly CheckBox pinRegion = new CheckBox();
         private readonly Label savedRuleDetails = new Label();
         private readonly TextBox ruleExplanation = new TextBox();
         private readonly Label ruleHint = new Label();
@@ -54,7 +55,7 @@ namespace DisplayWeave
             foreach (int height in new[] { 34, 24, 42, 24, 24, 42, 26, 236, 50 }) assign.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
             AddWide(assign, Heading("Add a rule for one app"), 0);
             AddWide(assign, Caption("1. Choose the app"), 1);
-            SetupCombo(windows); windows.AccessibleName = "Application window";
+            SetupCombo(windows); windows.AccessibleName = "Application";
             // An app started after DisplayWeave appears as soon as the list opens.
             windows.DropDown += delegate { RefreshWindows(); };
             assign.Controls.Add(windows, 0, 2);
@@ -72,7 +73,11 @@ namespace DisplayWeave
             pickedApp.Dock = DockStyle.Fill; pickedApp.AutoEllipsis = true;
             pickedApp.ForeColor = Color.FromArgb(75, 89, 110);
             AddWide(assign, pickedApp, 3);
-            AddWide(assign, Caption("2. Choose its region"), 4);
+            pinRegion.Text = "2. Pin to a specific region (otherwise DisplayWeave uses the region the app is currently in)";
+            pinRegion.Dock = DockStyle.Fill;
+            pinRegion.AccessibleName = "Pin the app to a specific region";
+            pinRegion.CheckedChanged += delegate { if (!updating) UpdateRuleActions(); };
+            AddWide(assign, pinRegion, 4);
             SetupCombo(ruleRegion); ruleRegion.AccessibleName = "App rule target region";
             assign.Controls.Add(ruleRegion, 0, 5);
             AddWide(assign, Caption("3. Choose how DisplayWeave handles it (hover ⓘ for details)"), 6);
@@ -161,7 +166,12 @@ namespace DisplayWeave
         {
             bool selected = windows.SelectedItem is WindowCandidate;
             RuleOption option = CheckedRuleOption();
-            bool usable = option != null && (option.Action == ApplicationAction.Ignore || ruleRegion.SelectedIndex >= 0);
+            bool ignore = option != null && option.Action == ApplicationAction.Ignore;
+            // Borderless and Centered always need a region; Force and Maximize may pin one or follow the app's current region.
+            bool needsRegion = option != null && (option.Action == ApplicationAction.BorderlessInRegion || option.Action == ApplicationAction.CenteredFullscreen);
+            bool pinnable = option != null && (option.Action == ApplicationAction.ForceFullscreen || option.Action == ApplicationAction.MaximizeInRegion);
+            bool wantRegion = needsRegion || (pinnable && pinRegion.Checked);
+            bool usable = option != null && (ignore || !wantRegion || ruleRegion.SelectedIndex >= 0);
             string explanation = option == null ? String.Empty : option.Details;
             if (option != null && option.Action == ApplicationAction.CenteredFullscreen)
             {
@@ -170,7 +180,8 @@ namespace DisplayWeave
                 usable &= centered;
             }
             if (ruleExplanation.Text != explanation) ruleExplanation.Text = explanation;
-            ruleRegion.Enabled = option == null || option.Action != ApplicationAction.Ignore;
+            pinRegion.Enabled = pinnable;
+            ruleRegion.Enabled = wantRegion;
             if (saveRule != null)
             {
                 saveRule.Enabled = selected && usable;
@@ -201,8 +212,11 @@ namespace DisplayWeave
             var item = windows.SelectedItem as WindowCandidate;
             RuleOption option = CheckedRuleOption();
             if (item == null || option == null) return;
-            if (option.Action == ApplicationAction.Ignore) IgnoreSelected();
-            else Assign(item.Handle, ruleRegion.SelectedIndex, option.Action);
+            if (option.Action == ApplicationAction.Ignore) { IgnoreSelected(); return; }
+            // Borderless and Centered always pin a region; Force and Maximize pin only when the box is checked, else -1 (current region).
+            bool wantRegion = option.Action == ApplicationAction.BorderlessInRegion || option.Action == ApplicationAction.CenteredFullscreen ||
+                ((option.Action == ApplicationAction.ForceFullscreen || option.Action == ApplicationAction.MaximizeInRegion) && pinRegion.Checked);
+            Assign(item.Handle, wantRegion ? ruleRegion.SelectedIndex : -1, option.Action);
         }
 
         private void Assign(IntPtr handle, int regionIndex, ApplicationAction action = ApplicationAction.ForceFullscreen)
@@ -306,10 +320,10 @@ namespace DisplayWeave
         {
             var old = windows.SelectedItem as WindowCandidate;
             windows.Items.Clear();
-            foreach (WindowCandidate item in WindowManager.ListWindows()) windows.Items.Add(item);
+            foreach (WindowCandidate item in WindowManager.ListApps()) windows.Items.Add(item);
             if (old != null)
                 for (int i = 0; i < windows.Items.Count; i++)
-                    if (((WindowCandidate)windows.Items[i]).Handle == old.Handle) windows.SelectedIndex = i;
+                    if (((WindowCandidate)windows.Items[i]).SameApp(old.Identity)) windows.SelectedIndex = i;
             UpdatePickedApp();
         }
 
@@ -336,7 +350,16 @@ namespace DisplayWeave
             if (!FullscreenController.TryInspect(handle, out identity, out error)) { notice = error; UpdateStatus(); return; }
             RefreshWindows();
             for (int i = 0; i < windows.Items.Count; i++)
-                if (((WindowCandidate)windows.Items[i]).Handle == handle) { windows.SelectedIndex = i; notice = "Application selected. Choose its region and how DisplayWeave handles it, then Save rule."; UpdateStatus(); return; }
+            {
+                var item = (WindowCandidate)windows.Items[i];
+                if (!item.SameApp(identity)) continue;
+                // The app now stands for the window it was dragged onto: a Force rule attaches to that one.
+                item.Handle = handle; item.Identity = identity;
+                if (windows.SelectedIndex == i) UpdatePickedApp(); else windows.SelectedIndex = i;
+                notice = "Application selected. Choose its region and how DisplayWeave handles it, then Save rule.";
+                UpdateStatus();
+                return;
+            }
             notice = "The selected window is not an eligible application window."; UpdateStatus();
         }
 

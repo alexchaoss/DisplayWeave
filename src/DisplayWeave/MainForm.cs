@@ -79,7 +79,7 @@ namespace DisplayWeave
                 fastTicksUntil = DateTime.UtcNow.AddSeconds(2);
                 if (timer.Interval != 250) timer.Interval = 250;
                 // A fullscreen Chromium window spreads over the whole display on each click or focus change.
-                if (fullscreen.RefitsAtOnce(window)) TickNow();
+                if (fullscreen.RefitNow(window)) TickNow();
             });
             // Administrator mode never updates: the setup would run elevated from a user-writable folder.
             if (installRoot != null && String.IsNullOrWhiteSpace(automaticExecutableFilter) && !ElevationRestart.IsElevated())

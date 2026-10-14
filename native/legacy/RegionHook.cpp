@@ -6,6 +6,7 @@
 #include "RegionProtocol.h"
 #include "RegionLayoutProtocol.h"
 #include "VirtualMonitorModel.h"
+#include "CompatibilityPolicy.h"
 #include "MinHook.h"
 
 // Application-local USER32 monitor and window compatibility. This does not
@@ -610,6 +611,10 @@ static LRESULT CALLBACK RegionWindowProcedure(HWND hwnd, UINT message, WPARAM wP
 }
 static bool EnsureWindowSubclass(const RegionSnapshot& s) {
     if (!IsTarget(s, s.hwnd)) return false;
+    // Chromium and Electron self-terminate when their window procedure is replaced (the __debugbreak that crashed VS Code).
+    // Confine them with the monitor and SetWindowPos hooks only: no subclass, but report ready so FitWindow still runs.
+    wchar_t className[256];
+    if (GetClassNameW(s.hwnd, className, 256) && RS_IsChromiumWindowClass(className)) return true;
     // This DLL and worker are in the window's process. SetWindowLongPtr supports
     // in-process subclassing; it does not require a queued-message bootstrap.
     AcquireSRWLockExclusive(&subclassLock);
