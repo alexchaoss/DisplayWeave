@@ -171,7 +171,7 @@ namespace DisplayWeave
             if (String.IsNullOrWhiteSpace(path)) return new LayoutSettings();
             try
             {
-                using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (FileStream stream = XmlFile.OpenRead(path))
                 {
                     if (stream.Length > MaximumXmlCharacters * 2) return RepairedDefaults();
                     XmlReaderSettings readerSettings = new XmlReaderSettings();

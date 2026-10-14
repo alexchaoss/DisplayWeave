@@ -47,7 +47,8 @@ inline bool RS_ReadLayout(RegionLayoutProtocol* shared, const RegionSnapshot& co
     RegionLayoutSnapshot& result) {
     if (!shared || shared->magic != RS_LAYOUT_MAGIC || shared->version != RS_LAYOUT_VERSION ||
         shared->size != sizeof(RegionLayoutProtocol)) return false;
-    for (int attempt = 0; attempt < 4; ++attempt) {
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        if (attempt >= 4) SwitchToThread(); // a writer preempted mid-update gets the CPU back
         LONG before = InterlockedCompareExchange(&shared->sequence, 0, 0);
         if (before & 1) continue;
         result.targetPid = shared->targetPid; result.controllerPid = shared->controllerPid;

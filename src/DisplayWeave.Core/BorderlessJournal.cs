@@ -68,8 +68,8 @@ namespace DisplayWeave
         internal static List<BorderlessJournal> Read(string path)
         {
             try { return Parse(File.Exists(path) ? File.ReadAllText(path, Encoding.UTF8) : null); }
-            catch (IOException) { return new List<BorderlessJournal>(); }
-            catch (UnauthorizedAccessException) { return new List<BorderlessJournal>(); }
+            catch (IOException ex) { ActivityLog.Write("The borderless window list could not be read: " + ex.Message); return new List<BorderlessJournal>(); }
+            catch (UnauthorizedAccessException ex) { ActivityLog.Write("The borderless window list could not be read: " + ex.Message); return new List<BorderlessJournal>(); }
         }
 
         // Replaced atomically; removed when no window is shown borderless. A failure only loses the crash recovery.
@@ -87,16 +87,19 @@ namespace DisplayWeave
         }
 
         // After an unexpected error: give every listed window that still belongs to its process its title bar back.
+        // One that is not responding stays listed for the next start.
         public static void RestoreAll(string path)
         {
+            List<BorderlessJournal> kept = new List<BorderlessJournal>();
             foreach (BorderlessJournal entry in Read(path))
             {
                 ApplicationIdentity current;
                 string error;
-                if (FullscreenController.TryInspect(entry.Handle, out current, out error) && entry.Matches(current))
-                    FullscreenController.RestoreBorderless(entry.Handle, entry.RemovedStyle, entry.RemovedExStyle, entry.OriginalBounds);
+                if (FullscreenController.TryInspect(entry.Handle, out current, out error) && entry.Matches(current) &&
+                    !FullscreenController.RestoreBorderless(entry.Handle, entry.RemovedStyle, entry.RemovedExStyle, entry.OriginalBounds))
+                    kept.Add(entry);
             }
-            Write(path, String.Empty);
+            Write(path, Format(kept));
         }
     }
 }

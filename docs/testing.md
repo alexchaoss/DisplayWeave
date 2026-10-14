@@ -4,11 +4,61 @@ Commands recorded below before October 10, 2026 use the old root-level script pa
 
 The virtual-display projection prototype and its evidence moved to the `prototype` branch on October 11, 2026. Entries below that mention prototype or projection checks record what was run at the time.
 
+## Live outside-fit suite (1.1.2, October 14, 2026)
+
+`tests/test-outside-fit.ps1` against a scratch build of the working tree (managed `build4`, native helpers built from the same tree), x64, Windows 11 build 26200, 7680 × 2160 at 125%, with the user's DisplayWeave closed (`--exit-for-update`, at the user's request).
+
+- 10 of 11 scenarios pass: Borderless in region (pause, not responding at the pause, killed controller), Maximize in region (maximized and borderless fullscreen windows, each returning to the monitor on pause), automatic handling, Ignore, removing a rule, Centered fullscreen, and Force fullscreen (the app sees its region, then its monitor, frame and place back after a pause).
+- The known-issue scenario fails as expected: an app that maximized itself under Force is left un-maximized at 3858 × 2147 after a pause.
+- Against `d1d45d4` (1.1.1's engine), the not-responding scenario fails ("dropped instead of kept for later"); against the build before the `RemoveRule` fix, the rule-removal scenario fails (window left at 7680 × 2100). Before the helper's BOM fix, the Force pause left the app confined (seen region 3840 × 2100 for over 4 s, then "Unknown command").
+- While the user's 1.1.1 was running, its automatic handling fitted the stand-in (activity log, 18:27:41), failing Ignore and Centered; hence the guard.
+- Managed self-tests: 20 + 72 + 14 + 34 (140 passed). Native policy (233) and IPC pass on x64 and x86.
+
+## Robustness fixes (1.1.2, October 14, 2026)
+
+From a read-only bug review of `d1d45d4` (C#, silent failures, native). x64, Windows 11 build 26200.
+
+- A borderless window that is not responding keeps its fit and journal entry and gets its title bar back on a
+  later tick, at resume or at the next start, instead of being dropped (`RestoreBorderless` returns false;
+  `ReturnAllMaximized`, `ReturnUnruledMaximized`, `BorderlessJournal.RestoreAll`). Failed moves back, an
+  unreadable journal, a crash-handler restore error and a failed WinEvent hook are logged.
+- App rules Save, Ignore and Restore re-inspect the listed window and refuse when its handle now belongs to
+  another app (`MainForm.StillOpen`), as the rule offer already did.
+- Clip host: a window that cannot be un-parented keeps its host instead of being destroyed with it.
+- Settings files locked for a moment are retried for about 0.5 s before counting as unreadable (`XmlFile.OpenRead`,
+  also used by the layout).
+- Native: both seqlock readers try 16 times, yielding after the fourth, so a controller preempted mid-write no longer
+  fails the hook's first read (which left the process unattachable until it restarted).
+
+Results:
+
+- `.\scripts\build.ps1 -OutputDirectory <scratch>`, then `--self-test`: layout 20, rules 72, automatic 14, lifecycle 34
+  (140 passed, 0 failed); new: the hung-window restore and the briefly locked rule file.
+- `.\scripts\build-native.ps1 -Architecture all -OutputDirectory <scratch>`; `--self-test-policy` (233 cases) and
+  `--self-test-ipc` pass on x64 and x86.
+- Not run: live hook or display fixtures, so the native change and the restore retry are not yet seen against a real app.
+
+## Security review (1.1.1, October 14, 2026)
+
+Read-only review of `d1d45d4`; nothing built, run or installed.
+
+- `npx ecc-agentshield scan --path .` (agent configuration only): grade A, 99/100; two medium
+  findings about `.claude/settings.local.json`, a git-ignored local file holding skill overrides only.
+- Code review of the elevation restart, startup value, launcher, hook DLL loading, updater,
+  installer, window messages, CI workflow and tracked files: no critical or high issue. One medium
+  (the administrator restart starts the exe and `DisplayWeave.Core.dll` from the user-writable
+  install folder) and three low (elevated writes into the user data folder, elevated trust in
+  user-editable rules, predictable native IPC names). The user chose to document them, not change
+  code: `.github/SECURITY.md` "Known limits".
+- Not reviewed: compiled binaries, memory safety of the native layout parsers, the Chromium gate,
+  PowerShell scripts beyond a search for `Invoke-Expression` (none), full git history beyond a
+  search for private keys (none).
+
 ## App rules list and detail view (1.1.1, October 14, 2026)
 
 Tested on top of `5e7e1e2`, x64.
 
-- `.\scriptsuild.ps1 -OutputDirectory <scratch>`, then `--self-test`: layout 20, rules 70, automatic 14, lifecycle 34
+- `.\scripts\build.ps1 -OutputDirectory <scratch>`, then `--self-test`: layout 20, rules 70, automatic 14, lifecycle 34
   (138 passed, 0 failed). No self-test covers the form.
 - Sandboxed interface: the built `MainForm` was hosted in a separate PowerShell process (at opacity 0), with copies of the user's
   `layout.xml` and `rules.xml` in a scratch data folder and an executable filter that matches nothing, so no window was

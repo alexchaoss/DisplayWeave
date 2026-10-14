@@ -44,7 +44,7 @@ namespace DisplayWeave
             {
                 ActivityLog.Write("DisplayWeave stopped after an unexpected error: " + e.ExceptionObject);
                 try { if (journal != null) BorderlessJournal.RestoreAll(journal); }
-                catch (Exception) { } // the next start takes them over instead
+                catch (Exception ex) { ActivityLog.Write("Windows shown without their title bar could not be restored: " + ex.Message); } // the next start takes them over
                 MessageBox.Show("DisplayWeave stopped after an unexpected error.\n\n" + e.ExceptionObject, "DisplayWeave stopped",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
             };

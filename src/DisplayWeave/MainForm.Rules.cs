@@ -244,7 +244,7 @@ namespace DisplayWeave
                 if (entry.Rule != null) RunSaving(delegate { return service.RemoveRule(entry.Rule); }, true);
                 return;
             }
-            if (entry.Window == null) return;
+            if (entry.Window == null || !StillOpen(entry.Window)) return;
             if (option.Action == ApplicationAction.Ignore) { RunSaving(delegate { return service.Ignore(entry.Window.Handle); }, true); return; }
             // Borderless and Centered always pin a region; Force and Maximize pin only when the box is checked, else -1 (current region).
             bool wantRegion = option.Action == ApplicationAction.BorderlessInRegion || option.Action == ApplicationAction.CenteredFullscreen ||
@@ -266,8 +266,18 @@ namespace DisplayWeave
         private void RestoreSelected()
         {
             AppEntry entry = SelectedEntry();
-            if (entry == null || entry.Window == null) return;
+            if (entry == null || entry.Window == null || !StillOpen(entry.Window)) return;
             ReleaseWindow(entry.Window.Handle);
+        }
+
+        // The list can be older than the window: a closed app's handle may now belong to another app, which must not get its rule.
+        private bool StillOpen(WindowCandidate window)
+        {
+            ApplicationIdentity current;
+            string error;
+            if (FullscreenController.TryInspect(window.Handle, out current, out error) && current.Key == window.Identity.Key) return true;
+            Report(System.IO.Path.GetFileName(window.Identity.ExecutablePath) + " has closed, so nothing was changed. Refresh the list and try again.");
+            return false;
         }
 
         private void ReleaseWindow(IntPtr handle)

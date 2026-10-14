@@ -24,6 +24,24 @@ namespace DisplayWeave
                 ApplicationIdentity reused = new ApplicationIdentity { Handle = entry.Handle, ProcessId = 42, CreationTime = entry.CreationTime + 1, ExecutablePath = entry.ExecutablePath };
                 Assert(read[0].Matches(same) && !read[0].Matches(reused), "A reused process ID was taken for the journaled window.");
             });
+            test("A window that is not responding keeps its title bar removal listed until it answers", delegate
+            {
+                using (System.Windows.Forms.Form window = new System.Windows.Forms.Form { StartPosition = System.Windows.Forms.FormStartPosition.Manual,
+                    Bounds = new Rectangle(100, 100, 800, 600) })
+                {
+                    window.Show();
+                    long style = WindowStyle(window.Handle, -16);
+                    Rectangle original = WindowBounds(window.Handle);
+                    System.Windows.Forms.Application.DoEvents();
+                    window.BeginInvoke(new Action(delegate { })); // a message left waiting while the thread does not check them
+                    System.Threading.Thread.Sleep(5500); // past Windows' 5-second hung-window limit
+                    Assert(!FullscreenController.RestoreBorderless(window.Handle, style & 0x00C40000L, 0, original),
+                        "A window that was not responding counted as restored.");
+                    System.Windows.Forms.Application.DoEvents();
+                    Assert(FullscreenController.RestoreBorderless(window.Handle, style & 0x00C40000L, 0, original),
+                        "A responding window was not restored.");
+                }
+            });
             test("A window shown borderless is journaled until it is released", delegate
             {
                 string directory = Path.Combine(Path.GetTempPath(), "DisplayWeave-journal-" + Guid.NewGuid().ToString("N"));

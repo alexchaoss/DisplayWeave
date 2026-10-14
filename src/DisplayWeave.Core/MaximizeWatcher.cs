@@ -24,6 +24,7 @@ namespace DisplayWeave
             callback = OnEvent;
             hook = SetWinEventHook(EventObjectLocationChange, EventObjectLocationChange, IntPtr.Zero, callback, 0, 0,
                 WinEventOutOfContext | WinEventSkipOwnProcess);
+            if (hook == IntPtr.Zero) ActivityLog.Write("Windows did not report window moves to DisplayWeave; maximized windows are checked on its timer only.");
         }
 
         private void OnEvent(IntPtr eventHook, uint eventType, IntPtr window, int objectId, int childId, uint thread, uint time)

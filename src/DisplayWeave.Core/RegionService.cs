@@ -183,12 +183,14 @@ namespace DisplayWeave
             {
                 ApplicationIdentity identity;
                 string error;
+                // Released to stop what the rule did now, then readmitted: without its rule the app is handled like any
+                // other at once (automatic handling included), not left out until handling is paused and resumed.
                 if (FullscreenController.TryInspect(candidate.Handle, out identity, out error) && rule.Matches(identity))
-                    Engine.ReleaseProcess(identity);
+                { Engine.ReleaseProcess(identity); Engine.Readmit(identity); }
             }
             Rules.Rules.Remove(rule);
             Save();
-            return "Saved rule removed and matching applications released.";
+            return "Saved rule removed. Its apps are now handled like any app without a rule.";
         }
 
         public void Dispose()

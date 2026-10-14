@@ -54,6 +54,15 @@ namespace DisplayWeave
                 rules.Rules.Clear(); rules.Save(path);
                 Assert(ApplicationRules.Load(path, out warning).Rules.Count == 0 && warning.Length == 0, "Removed rule returned after overwrite.");
             });
+            test("A rule file held open for a moment is read once it is free, not taken as unreadable", delegate
+            {
+                string path = Path.Combine(temporary, "locked.xml"), warning;
+                ApplicationRules rules = new ApplicationRules();
+                rules.Put(Rule("C:\\Games\\Example.exe", "GameWindow", ApplicationAction.ForceFullscreen)); rules.Save(path);
+                FileStream holder = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
+                System.Threading.ThreadPool.QueueUserWorkItem(delegate { System.Threading.Thread.Sleep(200); holder.Dispose(); });
+                Assert(ApplicationRules.Load(path, out warning).Rules.Count == 1 && warning.Length == 0, "A briefly locked rule file was read as unreadable: " + warning);
+            });
             test("Rule XML prohibits DTD and external entity resolution", delegate
             {
                 string path = Path.Combine(temporary, "dtd.xml"), warning;

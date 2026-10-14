@@ -63,7 +63,13 @@ namespace DisplayWeave
             IntPtr child = fit.Target.Handle;
             if (IsWindow(child))
             {
-                SetParent(child, IntPtr.Zero);
+                if (SetParent(child, IntPtr.Zero) == IntPtr.Zero)
+                {
+                    // Destroying the host now would destroy the app's window with it; an empty leftover host is the lesser harm.
+                    ActivityLog.Write("Windows did not take the " + Path.GetFileName(fit.Target.ExecutablePath) + " window out of its clip host (Windows error " +
+                        Marshal.GetLastWin32Error().ToString(CultureInfo.InvariantCulture) + "), so the host was left open.");
+                    return;
+                }
                 SetWindowLong(child, GwlStyle, fit.HostStyle);
                 SetWindowLong(child, GwlExStyle, fit.HostExStyle);
                 SetWindowPos(child, IntPtr.Zero, fit.OriginalBounds.X, fit.OriginalBounds.Y, fit.OriginalBounds.Width, fit.OriginalBounds.Height,

@@ -388,7 +388,8 @@ With administrator access, DisplayWeave starts its native helpers from a copy in
 the copy when it exits. From 0.6.0 it copies only the helper files its build lists and checks each
 copy against the SHA-256 recorded when it was built; a changed helper stops the
 administrator start with a message. A copy still loaded by a running app is removed at the next
-administrator start. Administrator mode never checks for or installs updates.
+administrator start. Administrator mode never checks for or installs updates. The app itself still starts from
+the install folder your account can change; [SECURITY.md](.github/SECURITY.md) lists what that allows.
 
 While running with administrator access, reopen settings from DisplayWeave's
 tray icon. Use **Exit DisplayWeave** from the tray before running the ordinary

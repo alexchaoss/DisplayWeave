@@ -196,6 +196,8 @@ static void Configure(int x, int y, int width, int height, int active) {
 static DWORD WINAPI ReadCommands(void*) {
     char line[2048];
     while (fgets(line, sizeof(line), stdin)) {
+        // A .NET controller whose input encoding is UTF-8 starts the pipe with a byte order mark; it is not part of the command.
+        if (memcmp(line, "\xEF\xBB\xBF", 3) == 0) memmove(line, line + 3, strlen(line + 3) + 1);
         ConfigurationScope guard;
         if (strncmp(line, "QUIT", 4) == 0) {
             InterlockedExchange(&requestedActive, 0);

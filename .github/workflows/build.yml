@@ -42,6 +42,11 @@ jobs:
           if gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName' | grep -qxF "v$version"; then
             echo "v$version already has a release or draft; bump src/DisplayWeave/version.txt to make another."
           else
+            # Every release carries its own notes; fail before anything is built or signed without them.
+            if [ ! -s "docs/releases/$version.md" ]; then
+              echo "::error file=docs/releases/$version.md::Write the release notes for $version in docs/releases/$version.md."
+              exit 1
+            fi
             echo "release=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -303,7 +308,8 @@ jobs:
           cd assets
           gh release create "v$VERSION" "DisplayWeave-$VERSION.zip" "DisplayWeave-$VERSION.zip.sha256" \
             "DisplayWeave-Setup-$VERSION.exe" "DisplayWeave-Setup-$VERSION.exe.sha256" \
-            --repo "$GITHUB_REPOSITORY" --draft --prerelease --title "DisplayWeave $VERSION" --target "$GITHUB_SHA" --generate-notes
+            --repo "$GITHUB_REPOSITORY" --draft --prerelease --title "DisplayWeave $VERSION" --target "$GITHUB_SHA" \
+            --notes-file "$GITHUB_WORKSPACE/docs/releases/$VERSION.md" --generate-notes # the notes, then GitHub's changelog link
           echo "Draft v$VERSION is ready. Sign and publish it with: .\scripts\sign-release.ps1 -Version $VERSION"
 
   # Publishes the draft with the signatures that the release key in Azure Key Vault made in the release

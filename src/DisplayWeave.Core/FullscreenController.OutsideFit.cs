@@ -213,14 +213,18 @@ namespace DisplayWeave
         }
 
         // Gives a window shown borderless its title bar, border and first place back. A minimized or maximized
-        // window keeps its place; only its frame returns.
-        internal static void RestoreBorderless(IntPtr handle, long removedStyle, long removedExStyle, Rectangle original)
+        // window keeps its place; only its frame returns. False while the window is not responding: the caller keeps
+        // it, and the journal with it, and tries again.
+        internal static bool RestoreBorderless(IntPtr handle, long removedStyle, long removedExStyle, Rectangle original)
         {
-            if (IsHungAppWindow(handle)) return;
+            if (IsHungAppWindow(handle)) return false;
             SetWindowLong(handle, GwlStyle, WindowLong(handle, GwlStyle) | removedStyle);
             SetWindowLong(handle, GwlExStyle, WindowLong(handle, GwlExStyle) | removedExStyle);
             uint flags = FitFlags | SwpFrameChanged | (IsIconic(handle) || IsZoomed(handle) ? SwpNoMove | SwpNoSize : 0);
-            SetWindowPos(handle, IntPtr.Zero, original.X, original.Y, original.Width, original.Height, flags);
+            if (!SetWindowPos(handle, IntPtr.Zero, original.X, original.Y, original.Width, original.Height, flags))
+                ActivityLog.Write("Windows did not give a window shown without its title bar its frame and place back (Windows error " +
+                    Marshal.GetLastWin32Error().ToString(CultureInfo.InvariantCulture) + ").");
+            return true;
         }
 
         private void FitFromOutside(ApplicationIdentity target, Rectangle region)
@@ -288,7 +292,7 @@ namespace DisplayWeave
                             (rule.Action == ApplicationAction.ForceFullscreen || rule.Action == ApplicationAction.MaximizeInRegion))
                             mode = RegionControlMode.Automatic;
                         if (fit.Styled ? mode == RegionControlMode.Borderless : KeepsMaximizedFit(mode, OutsideFitOnly(current))) continue;
-                        ReturnToMonitor(fit);
+                        if (!ReturnToMonitor(fit)) continue; // not responding: tried again next tick
                     }
                 }
                 catch (Exception ex) { Quarantine(fit.Target, ex); } // the other fitted windows are still checked
@@ -299,29 +303,40 @@ namespace DisplayWeave
 
         private void ReturnAllMaximized()
         {
+            List<MaximizedFit> kept = new List<MaximizedFit>();
             foreach (MaximizedFit fit in maximized.Values)
             {
                 ApplicationIdentity current;
                 string error;
-                if (TryInspect(fit.Target.Handle, out current, out error) && current.Key == fit.Target.Key) ReturnToMonitor(fit);
-                else ReleaseHost(fit); // a window the engine cannot inspect (its own, or gone) still needs its host torn down
+                if (!TryInspect(fit.Target.Handle, out current, out error) || current.Key != fit.Target.Key)
+                    ReleaseHost(fit); // a window the engine cannot inspect (its own, or gone) still needs its host torn down
+                else if (!ReturnToMonitor(fit))
+                {
+                    kept.Add(fit); // stays journaled, so a resume or the next start gives its title bar back
+                    ActivityLog.Write("The " + Path.GetFileName(fit.Target.ExecutablePath) + " window is not responding, so its title bar comes back later.");
+                }
             }
             maximized.Clear();
+            foreach (MaximizedFit fit in kept) maximized.Add(fit.Target.Handle, fit);
             SaveJournal();
         }
 
-        private static void ReturnToMonitor(MaximizedFit fit)
+        // False only when a borderless window is not responding and must be tried again.
+        private static bool ReturnToMonitor(MaximizedFit fit)
         {
             IntPtr handle = fit.Target.Handle;
-            if (fit.Host != IntPtr.Zero) { ReleaseHost(fit); return; } // a clip-host window is restored by un-parenting it
-            if (fit.Styled) { RestoreBorderless(handle, fit.RemovedStyle, fit.RemovedExStyle, fit.OriginalBounds); return; }
+            if (fit.Host != IntPtr.Zero) { ReleaseHost(fit); return true; } // a clip-host window is restored by un-parenting it
+            if (fit.Styled) return RestoreBorderless(handle, fit.RemovedStyle, fit.RemovedExStyle, fit.OriginalBounds);
             Rectangle current, wanted, frame;
             DisplayMonitor monitor = DisplayMonitor.FromWindow(handle);
             bool zoomed = IsZoomed(handle);
             // A borderless fullscreen window goes back to covering its whole monitor, taskbar included.
             if (monitor == null || IsIconic(handle) || !TryMaximizedBounds(handle, zoomed ? monitor.WorkingArea : monitor.Bounds,
-                out current, out wanted, out frame) || current == wanted || !(zoomed || BorderlessFullscreen(handle, frame, fit))) return;
-            SetWindowPos(handle, IntPtr.Zero, wanted.X, wanted.Y, wanted.Width, wanted.Height, FitFlags);
+                out current, out wanted, out frame) || current == wanted || !(zoomed || BorderlessFullscreen(handle, frame, fit))) return true;
+            if (!SetWindowPos(handle, IntPtr.Zero, wanted.X, wanted.Y, wanted.Width, wanted.Height, FitFlags))
+                ActivityLog.Write("Windows did not return the " + Path.GetFileName(fit.Target.ExecutablePath) + " window to its display (Windows error " +
+                    Marshal.GetLastWin32Error().ToString(CultureInfo.InvariantCulture) + ").");
+            return true;
         }
 
         private static bool TryMaximizedBounds(IntPtr handle, Rectangle target, out Rectangle current, out Rectangle wanted, out Rectangle visible)

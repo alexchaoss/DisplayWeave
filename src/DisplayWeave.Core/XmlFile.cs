@@ -15,8 +15,23 @@ namespace DisplayWeave
             if (!File.Exists(path)) return null;
             XmlReaderSettings options = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit,
                 XmlResolver = null, MaxCharactersInDocument = 1024 * 1024, MaxCharactersFromEntities = 0 };
-            using (XmlReader reader = XmlReader.Create(path, options))
+            using (FileStream stream = OpenRead(path))
+            using (XmlReader reader = XmlReader.Create(stream, options))
                 return (T)new XmlSerializer(typeof(T)).Deserialize(reader);
+        }
+
+        // A backup or antivirus scan can hold a settings file for a moment; reading it as unreadable would let the next
+        // save replace it with defaults, so a locked file is tried again for about half a second first.
+        internal static FileStream OpenRead(string path)
+        {
+            for (int attempt = 1; ; attempt++)
+            {
+                try { return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read); }
+                catch (FileNotFoundException) { throw; }
+                catch (DirectoryNotFoundException) { throw; }
+                catch (IOException) { if (attempt == 5) throw; }
+                System.Threading.Thread.Sleep(100);
+            }
         }
 
         internal static void Write(string path, object value)
