@@ -360,6 +360,23 @@ Test-Scenario 'Force fullscreen: the component confines the app to its region, a
     Wait-Restored $target.Window $target.Original 'After a pause'
 }
 
+Test-Scenario 'Force fullscreen: an app that went borderless fullscreen while confined gets its fullscreen or its place back on pause' {
+    param($target, $service)
+    $service.Value = New-Service $target.Data
+    $region = Get-Region $service.Value
+    $monitor = (Get-Monitor $service.Value).Bounds
+    Start-Forced $service.Value $target
+    # As a game does: it covers the monitor it sees, which with the component loaded is its region.
+    Send-Command $target 'fullscreen' 'fullscreen' | Out-Null
+    Wait-Until { [OutsideFitFixture]::Bounds($target.Window) -eq $region } { "The app's fullscreen did not cover its region: $([OutsideFitFixture]::Bounds($target.Window))." }
+    $service.Value.Engine.Pause()
+    Wait-Until { (Get-SeenScreen $target) -eq $monitor } { "After a pause the app still sees $(Get-SeenScreen $target), not its monitor $monitor." }
+    # Either the fullscreen it made, now over its whole monitor, or its frame and place from before the rule.
+    Wait-Until { (![OutsideFitFixture]::HasCaption($target.Window) -and [OutsideFitFixture]::Bounds($target.Window) -eq $monitor) -or
+        ([OutsideFitFixture]::HasCaption($target.Window) -and [OutsideFitFixture]::Bounds($target.Window) -eq $target.Original) } `
+        { "After a pause the window is left at $([OutsideFitFixture]::Bounds($target.Window)) (title bar: $([OutsideFitFixture]::HasCaption($target.Window))), neither fullscreen over $monitor nor back at $($target.Original)." }
+}
+
 # Known issue (open, 2026-10-14): the hook restores the placement it saved at attach, and an app that maximized itself
 # meanwhile is left un-maximized at its region's size. Kept failing on purpose until the hook is fixed.
 Test-Scenario 'Known issue, Force fullscreen: an app that maximized itself while confined gets its own state back on pause' {
