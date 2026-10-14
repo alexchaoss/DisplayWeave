@@ -901,6 +901,10 @@ static bool GetSiblingHookPath(std::wstring& result, DWORD& error) {
 }
 
 static bool ExistingSubclass(HWND hwnd) {
+    // The worker never subclasses a browser window (RegionHook's EnsureWindowSubclass reports it ready without one),
+    // so requiring the subclass refused every reconnection to a browser and made the user reopen it after an update.
+    wchar_t className[256];
+    if (GetClassNameW(hwnd, className, 256) && RS_IsChromiumWindowClass(className)) return true;
     return GetPropW(hwnd, L"DisplayWeave.Subclass.v2") == reinterpret_cast<HANDLE>(static_cast<INT_PTR>(1)) &&
         GetPropW(hwnd, L"DisplayWeave.OriginalProcedure.v2") != NULL;
 }

@@ -338,9 +338,10 @@ file containing a Borderless in region or Centered fullscreen rule cannot be rea
 
 Browsers and desktop apps built on Chromium stop themselves (a deliberate crash) when
 their window handling is hooked. From 0.5.9, DisplayWeave never loads anything into a
-window of Chromium's `Chrome_WidgetWin_*` class: automatic handling and Force rules
-use the outside fit described above, and a manual Force request explains why.
-The native helper refuses these windows too. From 0.5.11 their own fullscreen mode
+window of Chromium's `Chrome_WidgetWin_*` class on its own: automatic handling uses the
+outside fit described above. From 1.1.0 a Force fullscreen rule may load the component
+into such a window, for its display information only; its window procedure is never
+changed. From 0.5.11 their own fullscreen mode
 counts as borderless fullscreen and is fitted from outside too. Such a fullscreen window
 (a video, for example) spreads over the whole display again whenever it is clicked or
 loses or regains focus; from 1.0.5 DisplayWeave puts it back as soon as it moves, every
@@ -449,7 +450,9 @@ different installation folder alone no longer requires restarting an app.
 A reconnected component keeps the engine it was loaded with until the target app
 restarts; a new installation does not replace code inside a running app. The
 component also takes over any other window of the same app, such as a second
-browser window.
+browser window. From 1.1.3 this works for browser windows too: earlier versions
+refused to reconnect to them (Windows error 1400), so a browser with a Force rule
+had to be reopened after every update or restart of DisplayWeave.
 
 A component from an earlier build under another name or native protocol stays
 loaded but inactive. DisplayWeave loads its current component beside it, so the app

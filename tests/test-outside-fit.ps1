@@ -177,12 +177,12 @@ Import-Engine $run
 $script:failures = 0
 $script:scenario = 0
 # Runs one scenario on a fresh stand-in window and data folder, and reports it; a failure does not stop the others.
-function Test-Scenario([string]$name, [scriptblock]$body) {
+function Test-Scenario([string]$name, [scriptblock]$body, [string]$Arguments = '') {
     $script:scenario++
     $data = Join-Path $run ("{0:D2}-data" -f $script:scenario)
     New-Item -ItemType Directory -Path $data -Force | Out-Null
     [DisplayWeave.ActivityLog]::Open($data)
-    $process = Start-Piped $fixture ''
+    $process = Start-Piped $fixture $Arguments
     $service = $null
     try {
         $window = [IntPtr][long]((Read-Reply $process 'ready').Substring(6))
@@ -376,6 +376,26 @@ Test-Scenario 'Force fullscreen: an app that went borderless fullscreen while co
         ([OutsideFitFixture]::HasCaption($target.Window) -and [OutsideFitFixture]::Bounds($target.Window) -eq $target.Original) } `
         { "After a pause the window is left at $([OutsideFitFixture]::Bounds($target.Window)) (title bar: $([OutsideFitFixture]::HasCaption($target.Window))), neither fullscreen over $monitor nor back at $($target.Original)." }
 }
+
+# After an update or restart, the new DisplayWeave's helper must take over the component the previous one loaded,
+# so the app never needs reopening. The first controller exits as an old version does; its component stays loaded.
+$reconnect = {
+    param($target, $service)
+    $service.Value = New-Service $target.Data
+    $region = Get-Region $service.Value
+    $monitor = (Get-Monitor $service.Value).Bounds
+    Start-Forced $service.Value $target
+    if ((Get-SeenScreen $target) -ne $region) { throw 'The first session did not confine the app.' }
+    $service.Value.Dispose(); $service.Value = $null
+    $service.Value = New-Service $target.Data
+    Start-Forced $service.Value $target
+    $seen = Get-SeenScreen $target
+    if ($seen -ne $region) { throw "After the new session took over, the app sees $seen, not its region $region." }
+    $service.Value.Engine.Pause()
+    Wait-Until { (Get-SeenScreen $target) -eq $monitor } { "After a pause the app still sees $(Get-SeenScreen $target), not its monitor $monitor." }
+}
+Test-Scenario 'Force fullscreen: a new DisplayWeave session takes over the loaded component, without reopening the app' $reconnect
+Test-Scenario 'Force fullscreen, browser window: a new DisplayWeave session takes over the loaded component, without reopening the app' $reconnect -Arguments '--browser-class'
 
 # Known issue (open, 2026-10-14): the hook restores the placement it saved at attach, and an app that maximized itself
 # meanwhile is left un-maximized at its region's size. Kept failing on purpose until the hook is fixed.

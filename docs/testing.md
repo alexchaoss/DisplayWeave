@@ -4,6 +4,14 @@ Commands recorded below before October 10, 2026 use the old root-level script pa
 
 The virtual-display projection prototype and its evidence moved to the `prototype` branch on October 11, 2026. Entries below that mention prototype or projection checks record what was run at the time.
 
+## Reconnecting to a component in a browser window (1.1.3, October 14, 2026)
+
+Reported: after every update the user had to reopen the browser that has a Force fullscreen rule. The activity log shows "The existing DisplayWeave worker did not acknowledge reconnection; the application was not restarted (Windows error 1400)" at every DisplayWeave start since 1.1.0. Cause: on reuse, `HookHost.cpp` required the worker's window-procedure subclass (`ExistingSubclass`), which the worker never installs on a `Chrome_WidgetWin_*` window since 1.1.0. Fix: `ExistingSubclass` accepts such a window, as `RegionHook.cpp` `EnsureWindowSubclass` reports it ready.
+
+- `tests/test-outside-fit.ps1` gains two reconnect scenarios (a session takes over the component a previous session loaded): a WinForms stand-in, and a raw Win32 stand-in of class `Chrome_WidgetWin_1` (`TargetWindow.exe --browser-class`).
+- Before the fix (helpers built from `3414864`): the ordinary window passes; the browser-class window fails with the user's exact message and error 1400. After the fix: both pass, 13 of 14 scenarios, the known Force maximize issue still failing. Native policy (233) and IPC pass on x64 and x86.
+- Not tested: taking over a component loaded by an earlier release's DLL (the protocol is unchanged since 1.1.1, so it is expected to work).
+
 ## Live outside-fit suite (1.1.2, October 14, 2026)
 
 `tests/test-outside-fit.ps1` against a scratch build of the working tree (managed `build4`, native helpers built from the same tree), x64, Windows 11 build 26200, 7680 × 2160 at 125%, with the user's DisplayWeave closed (`--exit-for-update`, at the user's request).
