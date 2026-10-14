@@ -163,10 +163,10 @@ as [SECURITY.md](.github/SECURITY.md) explains.
    confined. Normal windows stay freely movable. If a window straddles regions, the
    greatest overlap chooses its region (the window center breaks ties).
 5. If an app needs something different, such as a game that resizes itself back to
-   the whole monitor, open **App rules**. Choose the app (**Drag onto app** or the
-   list), its region and how DisplayWeave handles it, then **Save rule**. The box
-   beside the options explains the selected one; hover **ⓘ** for the same text. See
-   [App rules](#app-rules).
+   the whole monitor, open **App rules**. Choose the app in the list on the left (or
+   **Drag onto app**), then how DisplayWeave handles it and, if needed, its region on
+   the right, and choose **Save**. The box beside the options explains the selected
+   one; hover **ⓘ** for the same text. See [App rules](#app-rules).
 6. **Release for now** returns the selected app to normal until you choose **Apply
    saved rules** or restart DisplayWeave; **Pause handling** suspends every rule.
 
@@ -178,7 +178,7 @@ Saved rules apply on the next launch and to future matching application windows.
 They match the full executable path and window class, with one target window and
 region per process. From 0.6.0, a part of the class that changes on every run (a GUID, or the
 suffix some frameworks add) is ignored, and Store apps, which all share one host
-program, are told apart by their app ID. The saved rules list shows when each rule
+program, are told apart by their app ID. App rules shows when each rule
 last applied. When Windows renames the display (`\\.\DISPLAYn`), as it can after a
 restart or a driver update, the layout and its rules follow the monitor; if the
 monitor itself is gone, they move only to the one display of the same size. A missing region or monitor is not silently substituted; the
@@ -280,7 +280,9 @@ fullscreen window to cover its whole monitor again.
 ## App rules
 
 A rule tells DisplayWeave how to handle one app, whatever automatic handling would
-do. On **App rules**, choose the app, its region and one of these, then **Save rule**:
+do. **App rules** lists apps on the left: **Saved** (apps with a rule, grayed when not
+running) above **Not saved** (running apps handled automatically). Select one, choose one
+of these on the right (and its region when it needs one), then **Save**:
 
 | Option | Loads anything into the app? | Use it for |
 | --- | --- | --- |
@@ -289,6 +291,7 @@ do. On **App rules**, choose the app, its region and one of these, then **Save r
 | **Centered fullscreen** | No | A game in exclusive fullscreen in the middle region, centered by the graphics driver. |
 | **Force fullscreen** | **Yes**, DisplayWeave's component | Apps whose own fullscreen modes must stay in the region, when the other options do not work and the app's terms allow it. |
 | **Ignore this app** | No | An app DisplayWeave must never move or resize. |
+| **Automatic (no rule)** | No | Removing an app's rule: saving it returns the app to automatic handling. |
 
 **Borderless in region** (from 0.5.12) applies while the window is shown and not
 maximized. Some games put their title bar back and keep their picture in the region;
@@ -325,8 +328,9 @@ fullscreen modes stay in the region too. Anti-cheat software can treat a loaded
 component as tampering: use Force rules only for apps whose terms allow it. An app
 that refuses the component falls back to the outside fit.
 
-Saved rules are listed under the options, with their app, region, option and the day
-they last applied; with several layout profiles, the list shows the profile in use. A rules
+Selecting a saved app shows its option, region and the day it last applied; with
+several layout profiles, the Saved heading names the profile in use. Changing the rule
+of an app that is not running needs the app running; removing it does not. A rules
 file containing a Borderless in region or Centered fullscreen rule cannot be read by
 0.5.11 or older, and one with a Maximize in region rule by 0.5.1 or older.
 

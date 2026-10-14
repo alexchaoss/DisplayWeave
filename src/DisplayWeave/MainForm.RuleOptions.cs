@@ -11,13 +11,18 @@ namespace DisplayWeave
         // depend on the chosen region, so they are built when it is selected.
         private sealed class RuleOption
         {
-            internal ApplicationAction Action;
+            // Null is Automatic: no rule.
+            internal ApplicationAction? Action;
             internal string Title, Summary, Details;
             internal RadioButton Choice;
         }
 
         private readonly RuleOption[] ruleOptions =
         {
+            new RuleOption { Action = null, Title = "Automatic (no rule)", Summary = "Default · handled like any app",
+                Details = "No rule. With automatic handling on, DisplayWeave fits this app into the region it is in when you maximize it or use its " +
+                    "borderless fullscreen mode. Nothing is loaded into the app.\r\n\r\n" +
+                    "Choosing this for an app with a saved rule and saving removes the rule." },
             new RuleOption { Action = ApplicationAction.MaximizeInRegion, Title = "Maximize in region", Summary = "Nothing loaded · keeps its title bar",
                 Details = "Keeps this app in the region, wherever its window is. Maximize it from its title bar, or use its borderless fullscreen mode, " +
                     "and DisplayWeave fits the window into the region from outside. A maximized window keeps its title bar. Nothing is loaded into the app.\r\n\r\n" +

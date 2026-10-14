@@ -4,6 +4,22 @@ Commands recorded below before October 10, 2026 use the old root-level script pa
 
 The virtual-display projection prototype and its evidence moved to the `prototype` branch on October 11, 2026. Entries below that mention prototype or projection checks record what was run at the time.
 
+## App rules list and detail view (1.1.1, October 14, 2026)
+
+Tested on top of `5e7e1e2`, x64.
+
+- `.\scriptsuild.ps1 -OutputDirectory <scratch>`, then `--self-test`: layout 20, rules 70, automatic 14, lifecycle 34
+  (138 passed, 0 failed). No self-test covers the form.
+- Sandboxed interface: the built `MainForm` was hosted in a separate PowerShell process (at opacity 0), with copies of the user's
+  `layout.xml` and `rules.xml` in a scratch data folder and an executable filter that matches nothing, so no window was
+  handled and no rule applied. Captured with `DrawToBitmap`:
+  - a saved, not-running app: grayed in **Saved**, Save disabled, with "Start … to change its rule";
+  - a running app in **Not saved**: Automatic, its path, class and bitness;
+  - Centered fullscreen chosen for a saved app: driver steps for region 2.
+  - Columns were widened until the option titles and the Drag onto app button fit at the default window size.
+- After the user reported the pin option missing, it was found hidden while Automatic was selected. It is now always shown and grayed when it does not apply; captured with Automatic and with Maximize in region.
+- Not done: saving, removing or changing a rule through the new page; the minimum window size.
+
 ## Inno Setup, native launcher, windowed helpers and fullscreen Chromium refit (1.0.5, October 13, 2026)
 
 On VirusTotal, 1.0.4 drew six detections. Per file: the setup alone drew Kaspersky Monder.gen, Elastic, SecureAge and

@@ -65,7 +65,6 @@ namespace DisplayWeave
             automaticRegions.Checked = settings.AutomaticRegions;
             updating = false;
             ReloadZones(0);
-            RefreshWindows();
             RefreshRules();
             RefreshProfiles();
             InitializeTray();

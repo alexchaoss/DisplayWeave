@@ -176,14 +176,14 @@ namespace DisplayWeave
             }
             zoneList.SelectedIndex = Math.Max(0, Math.Min(selected, settings.Zones.Count - 1));
             SyncRuleRegion();
-            foreach (ListViewItem row in savedRules.Items) row.SubItems[1].Text = RuleRegionName((ApplicationRule)row.Tag);
+            foreach (ListViewItem row in apps.Items) { var entry = (AppEntry)row.Tag; if (entry.Rule != null) row.SubItems[1].Text = RuleSummary(entry.Rule); }
             canvas.Layout = rulerLayout;
             canvas.SelectedIndex = zoneList.SelectedIndex;
             gridSpacing.Value = rulerLayout.GridStep;
             canvas.Invalidate();
             updating = false;
             UpdateRegionDimensions();
-            ShowRuleDetails(false);
+            ShowRuleDetails();
             UpdateStatus();
         }
 

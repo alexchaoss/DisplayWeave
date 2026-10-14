@@ -60,6 +60,8 @@ namespace DisplayWeave
                 {
                     picking = false; picker.Capture = false; Cursor = Cursors.Default;
                 }
+                // An app started after DisplayWeave appears as soon as the tab opens.
+                if (pages.SelectedTab == rulesPage) RefreshRules();
             };
             BuildLayoutPage(layoutPage);
             BuildRulesPage(rulesPage);
@@ -94,8 +96,7 @@ namespace DisplayWeave
 
             monitors.SelectedIndexChanged += delegate { if (!updating) { LayoutChanging(); settings.MonitorDevice = CurrentScreen.DeviceName; ReloadZones(zoneList.SelectedIndex); } };
             workArea.CheckedChanged += delegate { if (!updating) { LayoutChanging(); settings.UseWorkArea = workArea.Checked; ReloadZones(zoneList.SelectedIndex); } };
-            windows.SelectedIndexChanged += delegate { UpdatePickedApp(); UpdateRuleActions(); UpdateStatus(); };
-            savedRules.SelectedIndexChanged += delegate { ShowRuleDetails(); UpdateRuleActions(); };
+            apps.SelectedIndexChanged += delegate { ShowSelectedApp(); };
             zoneList.SelectedIndexChanged += delegate
             {
                 if (updating) return;
@@ -108,6 +109,7 @@ namespace DisplayWeave
             {
                 if (!updating && !syncingRegion && ruleRegion.SelectedIndex >= 0)
                     zoneList.SelectedIndex = ruleRegion.SelectedIndex;
+                if (!updating) UpdateRuleActions();
             };
             gridSpacing.ValueChanged += delegate { if (!updating) ChangeGridSpacing(); };
             automaticRegions.CheckedChanged += delegate
