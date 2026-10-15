@@ -4,7 +4,7 @@ Commands recorded below before October 10, 2026 use the old root-level script pa
 
 The virtual-display projection prototype and its evidence moved to the `prototype` branch on October 11, 2026. Entries below that mention prototype or projection checks record what was run at the time.
 
-## Layout and rule editing fixes (unreleased, October 15, 2026)
+## Layout and rule editing fixes (1.1.4, October 15, 2026)
 
 From an ECC feature review; the user asked for items 1 to 4 (unpin rather than retarget a split or merged region).
 
