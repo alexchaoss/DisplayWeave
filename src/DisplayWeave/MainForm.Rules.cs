@@ -197,24 +197,22 @@ namespace DisplayWeave
             ApplicationRule rule = entry == null ? null : entry.Rule;
             bool changed = entry != null && option != null && (option.Action != (rule == null ? (ApplicationAction?)null : rule.Action) ||
                 (wantRegion ? ruleRegion.SelectedIndex : -1) != PinnedIndex(rule));
-            // A rule of an app that is not running can only be removed: saving another one reads the running app.
-            bool possible = automatic || running;
             if (saveRule != null)
             {
-                saveRule.Enabled = changed && usable && possible;
+                saveRule.Enabled = changed && usable;
                 // A disabled flat button keeps its colour and still looks clickable.
                 saveRule.BackColor = saveRule.Enabled ? Color.FromArgb(34, 99, 176) : Color.FromArgb(200, 207, 217);
             }
             // Says why Save is unavailable instead of leaving a disabled button unexplained.
             string hint = entry == null ? "Choose an app on the left. Not listed? Use Drag onto app."
-                : !possible ? "Start " + appName.Text + " to change its rule, or choose Automatic to remove it."
                 : !usable && option.Action == ApplicationAction.CenteredFullscreen && ruleRegion.SelectedIndex >= 0 ? "Centered fullscreen needs the region in the middle of the display."
                 : !usable ? "Choose its region."
                 : !changed ? (rule == null ? "Handled automatically. Choose an option to add a rule." : "Saved. Saved rules take priority over automatic handling.")
                 : automatic ? "Save to remove this rule and return the app to automatic handling."
+                : !running ? "Not running: the changed rule applies the next time it starts."
                 : "Saved rules take priority over automatic handling.";
             if (ruleHint.Text != hint) ruleHint.Text = hint;
-            ruleHint.ForeColor = entry != null && usable && possible ? Color.FromArgb(75, 89, 110) : Color.FromArgb(150, 80, 14);
+            ruleHint.ForeColor = entry != null && usable ? Color.FromArgb(75, 89, 110) : Color.FromArgb(150, 80, 14);
             if (restoreApp != null) restoreApp.Enabled = running;
         }
 
@@ -244,12 +242,15 @@ namespace DisplayWeave
                 if (entry.Rule != null) RunSaving(delegate { return service.RemoveRule(entry.Rule); }, true);
                 return;
             }
-            if (entry.Window == null || !StillOpen(entry.Window)) return;
-            if (option.Action == ApplicationAction.Ignore) { RunSaving(delegate { return service.Ignore(entry.Window.Handle); }, true); return; }
             // Borderless and Centered always pin a region; Force and Maximize pin only when the box is checked, else -1 (current region).
             bool wantRegion = option.Action == ApplicationAction.BorderlessInRegion || option.Action == ApplicationAction.CenteredFullscreen ||
                 ((option.Action == ApplicationAction.ForceFullscreen || option.Action == ApplicationAction.MaximizeInRegion) && pinRegion.Checked);
-            Assign(entry.Window.Handle, wantRegion ? ruleRegion.SelectedIndex : -1, option.Action.Value);
+            int regionIndex = wantRegion ? ruleRegion.SelectedIndex : -1;
+            // A saved rule of an app that is not running changes from the identity it holds.
+            if (entry.Window == null) { RunSaving(delegate { return service.ChangeRule(entry.Rule, regionIndex, option.Action.Value); }, true); return; }
+            if (!StillOpen(entry.Window)) return;
+            if (option.Action == ApplicationAction.Ignore) { RunSaving(delegate { return service.Ignore(entry.Window.Handle); }, true); return; }
+            Assign(entry.Window.Handle, regionIndex, option.Action.Value);
         }
 
         private void Assign(IntPtr handle, int regionIndex, ApplicationAction action = ApplicationAction.ForceFullscreen)

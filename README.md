@@ -126,7 +126,11 @@ whole display and DisplayWeave fits it within about one frame; Windows' maximize
 animation hides that frame. With window animations turned off in Windows, the
 full-width frame can show briefly. An app with a working component goes straight to
 its region. Select a row to read exactly what happened and what to do.
-The status at the top right opens this list. When the layout's display is missing
+The status at the top right opens this list. From 1.1.4, a layout whose display is not
+connected at start (off, asleep or switched away) keeps that display: it is listed as
+**not connected**, nothing is handled, and exiting leaves the layout as it was. When the
+display is connected again, handling resumes by itself. Choose another display to move
+the layout there. When the layout's display is missing
 or its regions no longer fit it, the status reads **Layout needs attention** and the
 message names the displays Windows reports. Another display or region tool can
 rename them; exit it. If DisplayWeave hits an internal error with one app, it leaves
@@ -214,8 +218,11 @@ when needed (to 20 px for 1980 | 3720 | 1980) so its regions stay exact. A spaci
 that cannot fit the existing dividers is rejected without changing the layout.
 
 Moving pins retains application assignments. Splitting or merging gives the
-affected regions new identities, so their manual Force rules must be assigned again;
-unaffected regions keep their assignments. Old freehand layouts that do not form
+affected regions new identities. From 1.1.4, saving the layout then unpins the profile's
+Force fullscreen and Maximize in region rules for those regions: they use the region
+the app is in, and the message says how many changed. Borderless in region and Centered
+fullscreen rules need a region, so they show it as missing until you choose one.
+Unaffected regions keep their assignments. Old freehand layouts that do not form
 a complete rectangular grid are replaced with a valid layout, with rules paused
 for review. The previous file is backed up as `layout.xml.before-rulers.bak` on
 the first migration. Ruler spacing is saved with the layout.
@@ -227,7 +234,8 @@ games. On **Layout**, **New…** copies the current layout and its rules into a 
 profile and switches to it; choose a profile in the list, or in the tray menu's
 **Layout profile**, to switch. Switching saves the current layout, returns fitted
 windows to their monitor and fits them again in the new profile's regions.
-**Delete** removes the profile in use after switching to another one. Ignore rules,
+**Delete** removes the profile in use after switching to another one. If the switched
+layout cannot be saved, the current profile stays in use and handling goes on as before. Ignore rules,
 and rules saved before profiles existed, apply in every profile.
 
 ### Shortcuts
@@ -329,8 +337,8 @@ component as tampering: use Force rules only for apps whose terms allow it. An a
 that refuses the component falls back to the outside fit.
 
 Selecting a saved app shows its option, region and the day it last applied; with
-several layout profiles, the Saved heading names the profile in use. Changing the rule
-of an app that is not running needs the app running; removing it does not. A rules
+several layout profiles, the Saved heading names the profile in use. From 1.1.4 the rule
+of an app that is not running can be changed too; it applies the next time the app starts. A rules
 file containing a Borderless in region or Centered fullscreen rule cannot be read by
 0.5.11 or older, and one with a Maximize in region rule by 0.5.1 or older.
 

@@ -24,8 +24,21 @@ namespace DisplayWeave
         private RulerLayout rulerLayout;
         private Screen[] screens;
 
+        // The layout's display when it is not connected (off, asleep or switched away); it is listed last as not connected.
+        private string missingDisplay;
+
         private Screen CurrentScreen { get { return screens != null && monitors.SelectedIndex >= 0 && monitors.SelectedIndex < screens.Length ? screens[monitors.SelectedIndex] : Screen.PrimaryScreen; } }
-        private Rectangle Area { get { return workArea.Checked ? CurrentScreen.WorkingArea : CurrentScreen.Bounds; } }
+        private bool DisplayMissing { get { return missingDisplay != null && screens != null && monitors.SelectedIndex >= screens.Length; } }
+
+        // A missing display is edited at its saved size: another display's size could repair its regions into new ones.
+        private Rectangle Area
+        {
+            get
+            {
+                if (DisplayMissing && settings.MonitorWidth > 0 && settings.MonitorHeight > 0) return new Rectangle(0, 0, settings.MonitorWidth, settings.MonitorHeight);
+                return workArea.Checked ? CurrentScreen.WorkingArea : CurrentScreen.Bounds;
+            }
+        }
 
         private int ScalePercent
         {
@@ -133,14 +146,17 @@ namespace DisplayWeave
             updating = true;
             screens = Screen.AllScreens;
             monitors.Items.Clear();
-            int selected = 0;
+            int selected = -1;
             for (int i = 0; i < screens.Length; i++)
             {
                 monitors.Items.Add(screens[i].DeviceName + "  ·  " + screens[i].Bounds.Width + " × " + screens[i].Bounds.Height + (screens[i].Primary ? "  ·  Primary" : ""));
                 if (screens[i].DeviceName == settings.MonitorDevice) selected = i;
             }
-            monitors.SelectedIndex = selected;
-            settings.MonitorDevice = CurrentScreen.DeviceName;
+            // The layout keeps a display that is not connected: binding it to another one would be saved on exit.
+            missingDisplay = selected < 0 && !String.IsNullOrEmpty(settings.MonitorDevice) ? settings.MonitorDevice : null;
+            if (missingDisplay != null) { monitors.Items.Add(missingDisplay + "  ·  not connected"); selected = screens.Length; }
+            monitors.SelectedIndex = Math.Max(0, selected);
+            if (missingDisplay == null) settings.MonitorDevice = CurrentScreen.DeviceName;
             updating = false;
         }
 
@@ -151,7 +167,7 @@ namespace DisplayWeave
                 rulerLayout = new RulerLayout(settings, Area);
                 // A first start uses this display's halves: nothing saved to review, so no pause.
                 if (!File.Exists(service.LayoutPath)) rulerLayout.ApplyPreset(0, ScalePercent);
-                else if (rulerLayout.WasRepaired)
+                else if (rulerLayout.WasRepaired && !DisplayMissing)
                 {
                     LayoutChanging();
                     notice = "The previous layout was adjusted to a non-overlapping ruler grid. Review the regions before applying saved rules.";
@@ -220,12 +236,15 @@ namespace DisplayWeave
             ValidateChildren();
             try
             {
+                string unpinned = null;
                 if (showResult)
                 {
                     notice = service.ApplyLayout();
                     lastEngineError = fullscreen.LastMessage;
                 }
-                else service.SaveLayout();
+                else if ((unpinned = service.SaveLayout()) != null) notice = unpinned;
+                // Rules whose region was split or merged now show their new target.
+                if (showResult || unpinned != null) RefreshRules();
                 SetLayoutState("Saved" + (showResult ? " and applied" : "") + " · " + settings.Zones.Count + " regions · " + settings.GridStepPixels + " px grid", false);
             }
             catch (IOException ex)
@@ -282,12 +301,30 @@ namespace DisplayWeave
         // read again for the display as it is now and stays paused for review. A renamed display is followed first.
         private void DisplayChangedForGood()
         {
+            bool wasMissing = DisplayMissing;
             displayWait = Rectangle.Empty;
             string moved = layoutDirty ? null : service.RebindMonitor();
             LoadMonitors();
             ReloadZones(0);
             RefreshRules();
+            if (wasMissing && !DisplayMissing && !layoutDirty)
+            {
+                // The layout was made for this display, so there is nothing to review.
+                fullscreen.Resume();
+                ShowSavedLayoutState();
+                Report("The layout's display " + settings.MonitorDevice + " is connected again; region handling resumed.");
+                return;
+            }
+            if (DisplayMissing && !layoutDirty) { ShowSavedLayoutState(); Report(layoutState.Text); return; }
             Report(moved ?? "The display changed and no game is in exclusive fullscreen. Region handling is paused; review the layout, then Save layout.");
+        }
+
+        // The footer when nothing is being edited.
+        private void ShowSavedLayoutState()
+        {
+            if (DisplayMissing)
+                SetLayoutState("The layout's display " + missingDisplay + " is not connected. Region handling waits for it; choose another display to move the layout there.", true);
+            else SetLayoutState("Saved layout loaded · " + settings.Zones.Count + " regions · " + settings.GridStepPixels + " px grid", false);
         }
 
         // Only a fullscreen game keeps the display changed while it runs; Windows says when one is in front.
@@ -306,6 +343,7 @@ namespace DisplayWeave
             displayWait = Rectangle.Empty;
             LoadMonitors();
             ReloadZones(zoneList.SelectedIndex);
+            if (!layoutDirty) ShowSavedLayoutState();
         }
     }
 }

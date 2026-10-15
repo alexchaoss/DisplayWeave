@@ -31,11 +31,26 @@ namespace DisplayWeave
             if (!File.Exists(path)) return "There is no layout profile named " + name + ".";
             LayoutSettings next = LayoutSettings.Load(path);
             Write(delegate { StampMonitor(); Layout.Save(ProfilePath(Layout.ProfileName)); });
+            LayoutSettings previous = new LayoutSettings();
+            previous.CopyFrom(Layout);
+            bool wasPaused = Engine.Paused;
             Engine.Pause();
-            Layout.CopyFrom(next);
-            Layout.ProfileName = name;
-            RebindMonitor();
-            SaveLayout();
+            try
+            {
+                Layout.CopyFrom(next);
+                Layout.ProfileName = name;
+                RebindMonitor();
+                SaveLayout();
+            }
+            catch (IOException)
+            {
+                // The previous profile stays in use and handling goes on as before: a failed save must not leave every app unhandled.
+                Layout.CopyFrom(previous);
+                try { SaveLayout(); }
+                catch (IOException) { }
+                if (!wasPaused) Engine.Resume();
+                throw;
+            }
             Engine.ForgetRegions();
             Engine.Resume();
             string message = "Switched to layout profile " + name + ".";

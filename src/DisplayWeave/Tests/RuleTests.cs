@@ -33,6 +33,7 @@ namespace DisplayWeave
                 HandlingTests(test, temporary);
                 IdentityTests(test);
                 RecoveryTests(test);
+                EditingTests(test);
             }
             finally
             {

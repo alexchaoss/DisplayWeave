@@ -68,7 +68,8 @@ namespace DisplayWeave
             RefreshRules();
             RefreshProfiles();
             InitializeTray();
-            if (!layoutDirty) SetLayoutState("Saved layout loaded · " + settings.Zones.Count + " regions · " + settings.GridStepPixels + " px grid", false);
+            if (!layoutDirty) ShowSavedLayoutState();
+            if (DisplayMissing && String.IsNullOrEmpty(notice)) notice = layoutState.Text;
             timer.Interval = 250;
             timer.Tick += delegate { TickNow(); };
             timer.Start();
@@ -221,7 +222,8 @@ namespace DisplayWeave
                 }
                 return;
             }
-            if (!SaveLayout(false) && e.CloseReason == CloseReason.UserClosing)
+            // An unedited layout whose display is not connected is left as saved.
+            if ((!DisplayMissing || layoutDirty) && !SaveLayout(false) && e.CloseReason == CloseReason.UserClosing)
             {
                 e.Cancel = true;
                 exitRequested = false;

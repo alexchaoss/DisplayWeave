@@ -71,14 +71,38 @@ namespace DisplayWeave
             catch (Exception ex) { ActivityLog.Write("The rules' last-used dates could not be saved: " + ex.Message); }
         }
 
-        public void SaveLayout()
+        // Returns what happened to rules whose pinned region the saved layout no longer has, or null.
+        public string SaveLayout()
         {
-            Write(delegate { StampMonitor(); Layout.Save(LayoutPath); });
+            string unpinned = null;
+            Write(delegate { StampMonitor(); Layout.Save(LayoutPath); unpinned = UnpinMissingRegions(); if (unpinned != null) Rules.Save(RulesPath); });
+            return unpinned;
         }
 
         public void Save()
         {
-            Write(delegate { StampMonitor(); Layout.Save(LayoutPath); Rules.Save(RulesPath); });
+            Write(delegate { StampMonitor(); Layout.Save(LayoutPath); UnpinMissingRegions(); Rules.Save(RulesPath); });
+        }
+
+        // Splitting or merging regions gives them new identities. The active profile's Force and Maximize rules pinned to a
+        // region that is gone then use the region the app is in; Borderless and Centered need a region, so they wait for one.
+        // Saving normalizes the layout first, so this runs after it.
+        private string UnpinMissingRegions()
+        {
+            int unpinned = 0, waiting = 0;
+            foreach (ApplicationRule rule in Rules.Rules)
+            {
+                if (String.IsNullOrEmpty(rule.ZoneId) || !Same(rule.ProfileName, Layout.ProfileName) ||
+                    Layout.Zones.Exists(delegate(Zone zone) { return zone.Id == rule.ZoneId; })) continue;
+                if (rule.Action == ApplicationAction.ForceFullscreen || rule.Action == ApplicationAction.MaximizeInRegion) { rule.ZoneId = null; unpinned++; }
+                else if (rule.Action != ApplicationAction.Ignore) waiting++;
+            }
+            if (unpinned == 0) return null;
+            string message = unpinned + (unpinned == 1 ? " app rule's region was" : " app rules' regions were") +
+                " split or merged, so " + (unpinned == 1 ? "it now uses" : "they now use") + " the region the app is in." +
+                (waiting > 0 ? " " + waiting + " Borderless or Centered " + (waiting == 1 ? "rule needs" : "rules need") + " a region again on App rules." : String.Empty);
+            ActivityLog.Write(message);
+            return message;
         }
 
         public void SaveShortcuts()
@@ -90,10 +114,10 @@ namespace DisplayWeave
 
         public string ApplyLayout()
         {
-            SaveLayout();
+            string unpinned = SaveLayout();
             Engine.Resume();
             Tick();
-            return "Layout saved and applied. Apps can now maximize or go fullscreen in their current region.";
+            return "Layout saved and applied. Apps can now maximize or go fullscreen in their current region." + (unpinned == null ? String.Empty : " " + unpinned);
         }
 
         public string ApplySavedRules()
@@ -179,18 +203,46 @@ namespace DisplayWeave
 
         public string RemoveRule(ApplicationRule rule)
         {
+            Readmit(rule);
+            Rules.Rules.Remove(rule);
+            Save();
+            return "Saved rule removed. Its apps are now handled like any app without a rule.";
+        }
+
+        // Changes a saved rule from the app identity it already holds, so its app need not be running. regionIndex is as for Assign.
+        public string ChangeRule(ApplicationRule rule, int regionIndex, ApplicationAction action)
+        {
+            if (regionIndex >= Layout.Zones.Count) return "There is no such region in this layout.";
+            bool pin = regionIndex >= 0 && action != ApplicationAction.Ignore;
+            if (!pin && (action == ApplicationAction.BorderlessInRegion || action == ApplicationAction.CenteredFullscreen))
+                return "Choose a region for this option, or use a different option.";
+            if (action == ApplicationAction.BorderlessInRegion && ShellProcessProtection.IsFolderWindow(rule.WindowClass))
+                return "File Explorer folder windows can only use Maximize in region.";
+            ApplicationRule changed = new ApplicationRule { ExecutablePath = rule.ExecutablePath, WindowClass = rule.WindowClass, AppId = rule.AppId,
+                DisplayName = rule.DisplayName, Action = action, MonitorDevice = action == ApplicationAction.Ignore ? null : Layout.MonitorDevice,
+                ZoneId = pin ? Layout.Zones[regionIndex].Id : null, ProfileName = action == ApplicationAction.Ignore ? null : Layout.ProfileName,
+                LastMatched = rule.LastMatched };
+            // An app started since the list was read is handled again under the changed rule.
+            Readmit(rule);
+            Rules.Rules.Remove(rule);
+            Rules.Put(changed);
+            Save();
+            return "Saved for " + rule.DisplayName + ": " + ApplicationRule.ActionName(action) +
+                (pin ? " in " + Layout.Zones[regionIndex].Name : action == ApplicationAction.Ignore ? String.Empty : " in the region it is in") +
+                ". It applies the next time the app starts.";
+        }
+
+        // Released to stop what the rule did now, then readmitted: under its changed rule, or without one like any other
+        // app (automatic handling included), at once instead of after handling is paused and resumed.
+        private void Readmit(ApplicationRule rule)
+        {
             foreach (WindowCandidate candidate in WindowManager.ListWindows())
             {
                 ApplicationIdentity identity;
                 string error;
-                // Released to stop what the rule did now, then readmitted: without its rule the app is handled like any
-                // other at once (automatic handling included), not left out until handling is paused and resumed.
                 if (FullscreenController.TryInspect(candidate.Handle, out identity, out error) && rule.Matches(identity))
                 { Engine.ReleaseProcess(identity); Engine.Readmit(identity); }
             }
-            Rules.Rules.Remove(rule);
-            Save();
-            return "Saved rule removed. Its apps are now handled like any app without a rule.";
         }
 
         public void Dispose()

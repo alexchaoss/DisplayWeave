@@ -94,7 +94,7 @@ namespace DisplayWeave
             footer.Controls.Add(save, 1, 0); footer.SetRowSpan(save, 2);
             root.Controls.Add(footer, 0, 2);
 
-            monitors.SelectedIndexChanged += delegate { if (!updating) { LayoutChanging(); settings.MonitorDevice = CurrentScreen.DeviceName; ReloadZones(zoneList.SelectedIndex); } };
+            monitors.SelectedIndexChanged += delegate { if (!updating) { LayoutChanging(); settings.MonitorDevice = DisplayMissing ? missingDisplay : CurrentScreen.DeviceName; ReloadZones(zoneList.SelectedIndex); } };
             workArea.CheckedChanged += delegate { if (!updating) { LayoutChanging(); settings.UseWorkArea = workArea.Checked; ReloadZones(zoneList.SelectedIndex); } };
             apps.SelectedIndexChanged += delegate { ShowSelectedApp(); };
             zoneList.SelectedIndexChanged += delegate

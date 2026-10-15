@@ -45,6 +45,10 @@ Update downloads: %TEMP%\DisplayWeaveUpdate
 
 Remote: [alexchaoss/DisplayWeave](https://github.com/alexchaoss/DisplayWeave) (`main`, `prototype`). Release tags: app `v*`, prototype `prototype-v*`. RegionScreen 0.5.4 was uninstalled from the development computer on October 11.
 
+## After 1.1.3 (uncommitted work, October 15)
+
+The user asked for four items from an ECC feature review (testing.md, "Layout and rule editing fixes"): a missing display no longer rebinds the layout (`MainForm.LoadMonitors`), a failed profile switch rolls back (`RegionService.SwitchProfile`), a rule of an app that is not running can be changed (`RegionService.ChangeRule`), and saving a layout unpins Force/Maximize rules whose region was split or merged (`RegionService.UnpinMissingRegions`; user choice: unassign, not retarget). Rules were already per profile. Not released; README says "From 1.1.4".
+
 ## In 1.1.3 (published October 15)
 
 Published by CI as `1.1.3` (run 38656502182). Not yet installed on the development computer, and the takeover of a component loaded by 1.1.2 is not yet confirmed live. Notes: [releases/1.1.3.md](releases/1.1.3.md). Evidence: [testing.md](testing.md), "Reconnecting to a component in a browser window".

@@ -4,6 +4,16 @@ Commands recorded below before October 10, 2026 use the old root-level script pa
 
 The virtual-display projection prototype and its evidence moved to the `prototype` branch on October 11, 2026. Entries below that mention prototype or projection checks record what was run at the time.
 
+## Layout and rule editing fixes (unreleased, October 15, 2026)
+
+From an ECC feature review; the user asked for items 1 to 4 (unpin rather than retarget a split or merged region).
+
+- **Missing display at start**: `MainForm.LoadMonitors` bound the layout to the first display when its own was not connected, and the exit save kept that. It now keeps the saved display, lists it as not connected, edits it at its saved size (`Area`), skips the repair prompt and the exit save while unedited, and resumes handling when the display is back (`DisplayChangedForGood`). Checked with a one-off scratchpad script that builds `MainForm` in its own process with a temporary data folder (no message loop, an automatic filter matching no app): a layout on `\\.\DISPLAY99` stayed byte-identical after exit and showed the not-connected state; a layout on the primary display saved normally. The reconnect-and-resume path is not tested live.
+- **Failed profile switch**: `RegionService.SwitchProfile` rolls back to the previous profile and handling state when saving fails. Self-test "A failed profile switch keeps the profile and handling as they were" (layout.xml made a folder) fails on the old code (profile Gaming, handling paused) and passes now.
+- **Changing a rule of an app that is not running**: `RegionService.ChangeRule` rebuilds the rule from its saved identity; App rules enables Save for such a rule. Self-test "A saved rule changes without its app running".
+- **Split or merged regions**: `RegionService.SaveLayout`/`Save` unpin the active profile's Force and Maximize rules whose region is gone and report it; Borderless and Centered rules are left for the user. Self-test "Saving a split or merged region unpins its Force and Maximize rules only".
+- Managed checks: layout 20, rules 75, automatic 14, lifecycle 34, all passing (x64 build of the working tree). The UI paths (App rules Save for a not-running app, the unpinned message after Save layout) were not clicked through.
+
 ## Reconnecting to a component in a browser window (1.1.3, October 14, 2026)
 
 Reported: after every update the user had to reopen the browser that has a Force fullscreen rule. The activity log shows "The existing DisplayWeave worker did not acknowledge reconnection; the application was not restarted (Windows error 1400)" at every DisplayWeave start since 1.1.0. Cause: on reuse, `HookHost.cpp` required the worker's window-procedure subclass (`ExistingSubclass`), which the worker never installs on a `Chrome_WidgetWin_*` window since 1.1.0. Fix: `ExistingSubclass` accepts such a window, as `RegionHook.cpp` `EnsureWindowSubclass` reports it ready.
