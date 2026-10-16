@@ -1,5 +1,11 @@
 # DisplayWeave
 
+[![Build](https://img.shields.io/github/actions/workflow/status/alexchaoss/DisplayWeave/build.yml?branch=main&label=build)](https://github.com/alexchaoss/DisplayWeave/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/alexchaoss/DisplayWeave)](https://github.com/alexchaoss/DisplayWeave/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/alexchaoss/DisplayWeave/total)](https://github.com/alexchaoss/DisplayWeave/releases)
+[![License: MIT](https://img.shields.io/github/license/alexchaoss/DisplayWeave)](LICENSE)
+![Platform: Windows 10/11 x64](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D6)
+
 Windows virtual-monitor compatibility app with automatic region detection, custom
 screen regions, and optional per-application rules.
 
