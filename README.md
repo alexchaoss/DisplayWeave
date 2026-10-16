@@ -126,7 +126,8 @@ The app is in `src/DisplayWeave`, the reusable engine (`DisplayWeave.Core.dll`) 
 `src/DisplayWeave.Core`, and native code in `native/legacy`. See the
 [development runbook](docs/development.md), the [engine notes](docs/engine.md) for the
 hooking internals and a headless host example, [docs/testing.md](docs/testing.md) for
-test results, and [AGENTS.md](AGENTS.md) for AI-agent continuation. Report security
+test results, [CONTRIBUTING.md](.github/CONTRIBUTING.md) if you want to help, and
+[AGENTS.md](AGENTS.md) for AI-agent continuation. Report security
 problems privately, as [SECURITY.md](.github/SECURITY.md) explains.
 
 ## License
