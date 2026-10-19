@@ -161,7 +161,9 @@ namespace DisplayWeave
                     sessions.TryGetValue(identity.ProcessId, out existing);
                     if (existing != null && existing.AwaitingExitOutput) continue;
                     // Native hooks target one main window per process; never retarget a secondary window implicitly.
-                    if (existing != null && existing.Target.Key != identity.Key) continue;
+                    // It is fitted from outside instead, and the main window's session is left untouched.
+                    bool secondary = existing != null && existing.Target.Key != identity.Key;
+                    if (secondary) existing = null;
                     ApplicationRule rule = MatchingRule(rules, identity, layout);
                     Rectangle region;
                     bool resolved = RegionGeometry.TryResolveRegion(rule, layout, out region);
@@ -204,7 +206,7 @@ namespace DisplayWeave
                     }
                     if (mode == RegionControlMode.Force)
                     {
-                        if (existing == null && OutsideFitOnly(identity)) FitFromOutside(identity, region);
+                        if (secondary || (existing == null && OutsideFitOnly(identity))) FitFromOutside(identity, region);
                         else AttachCore(identity, region, false, false, layoutRegions);
                         continue;
                     }
@@ -234,10 +236,10 @@ namespace DisplayWeave
                     // The live hook fixtures, scoped to one executable, also load it.
                     bool eligibleInject = !OutsideFitOnly(identity) && !LauncherProcessProtection.IsExcludedExecutable(identity.ExecutablePath);
                     bool wantInject;
-                    if (forcedAutomatic == RegionControlMode.Force) wantInject = eligibleInject;        // pinless Force rule: inject, else fall back outside
+                    if (forcedAutomatic == RegionControlMode.Force) wantInject = eligibleInject && !secondary;       // pinless Force rule: inject, else fall back outside
                     else if (forcedAutomatic == RegionControlMode.Maximize) wantInject = false;         // pinless Maximize rule: outside fit
-                    else wantInject = (InjectDefault && eligibleInject && !ChromiumWindowProtection.IsChromiumWindow(identity.WindowClass)) ||
-                        (!String.IsNullOrWhiteSpace(AutomaticExecutableFilter) && !(existing == null && OutsideFitOnly(identity)));
+                    else wantInject = !secondary && ((InjectDefault && eligibleInject && !ChromiumWindowProtection.IsChromiumWindow(identity.WindowClass)) ||
+                        (!String.IsNullOrWhiteSpace(AutomaticExecutableFilter) && !(existing == null && OutsideFitOnly(identity))));
                     if (!wantInject) { Disable(existing); FitFromOutside(identity, region); continue; }
                     if (existing != null) AttachCore(identity, region, false, true, layoutRegions, zoneId);
                     else if (!failed.Contains(identity.Key) && DateTime.UtcNow >= nextAutomaticLaunch)
